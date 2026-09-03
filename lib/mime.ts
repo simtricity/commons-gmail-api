@@ -55,6 +55,7 @@ export function decodeBase64Url(data: string): Uint8Array {
   return bytes;
 }
 
+/** Lowercase hex SHA-256 of `bytes`, via WebCrypto. */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest))
@@ -64,12 +65,19 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 
 /** Metadata-only view of a message: no body, no snippet. */
 export interface MessageSummary {
+  /** Gmail message id. */
   id: string;
+  /** Gmail thread id. */
   threadId: string;
+  /** `Date` header as sent. */
   date: string;
+  /** `From` header as sent. */
   from: string;
+  /** `To` header as sent. */
   to: string;
+  /** `Subject` header as sent. */
   subject: string;
+  /** Attachments found in the MIME tree, without attachment ids (those are ephemeral). */
   attachments: {
     filename: string;
     mimeType: string;

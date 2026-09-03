@@ -24,8 +24,11 @@ import type {
 
 const API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+/** Options for constructing a `GmailClient`. */
 export interface GmailClientOptions {
+  /** The OAuth client used to refresh access tokens. */
   clientSecret: ClientSecret;
+  /** Where the refresh token and cached access token live. */
   store: TokenStore;
   /** Mailbox to act as. Omitted → the store's default. */
   account?: string;
@@ -33,11 +36,14 @@ export interface GmailClientOptions {
   log?: (line: string) => void;
 }
 
+/** Read-only Gmail REST client. Refreshes access tokens on demand and retries once on 401. */
 export class GmailClient {
+  /** Mailbox this client acts as; `undefined` means the store's default account. */
   readonly account?: string;
   private cred: OAuthCredential | null = null;
   private readonly log: (line: string) => void;
 
+  /** Construct without touching the store; credentials load lazily on first call. */
   constructor(private readonly opts: GmailClientOptions) {
     this.account = opts.account;
     this.log = opts.log ?? (() => {});
@@ -55,6 +61,7 @@ export class GmailClient {
     return (await this.credential()).email;
   }
 
+  /** Load the credential from the store once and cache it; throws `NotSignedInError` if absent. */
   private async credential(): Promise<OAuthCredential> {
     if (this.cred) return this.cred;
     const loaded = await this.opts.store.load(this.account);
@@ -67,6 +74,7 @@ export class GmailClient {
     return loaded;
   }
 
+  /** Return a fresh access token, refreshing via the OAuth client when stale or when `force` is set. */
   private async accessToken(force = false): Promise<string> {
     let cred = await this.credential();
     if (force || isAccessTokenStale(cred)) {
@@ -88,6 +96,7 @@ export class GmailClient {
     return cred.accessToken;
   }
 
+  /** Authenticated GET against the Gmail API; on 401 refreshes once and retries, then throws `GmailApiError`. */
   private async get<T>(path: string, retry = true): Promise<T> {
     const token = await this.accessToken();
     const res = await fetch(`${API_BASE}${path}`, {
@@ -123,10 +132,12 @@ export class GmailClient {
 
   // ── Reads ──────────────────────────────────────────────────────────────────
 
+  /** The signed-in mailbox's profile: address and message/thread counts. */
   profile(): Promise<Profile> {
     return this.get<Profile>("/profile");
   }
 
+  /** All labels visible to the mailbox. */
   listLabels(): Promise<Label[]> {
     return this.get<{ labels?: Label[] }>("/labels").then((r) => r.labels ?? []);
   }
@@ -150,12 +161,14 @@ export class GmailClient {
     return this.get<MessageListResponse>(`/messages?${params}`);
   }
 
+  /** Fetch one message. `format` follows Gmail's `users.messages.get` semantics. */
   getMessage(id: string, format: MessageFormat = "full"): Promise<Message> {
     return this.get<Message>(
       `/messages/${encodeURIComponent(id)}?format=${format}`,
     );
   }
 
+  /** Fetch one thread with all its messages. `format` follows Gmail's `users.threads.get` semantics. */
   getThread(id: string, format: MessageFormat = "full"): Promise<Thread> {
     return this.get<Thread>(
       `/threads/${encodeURIComponent(id)}?format=${format}`,

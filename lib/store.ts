@@ -17,18 +17,23 @@ interface FileShape {
   accounts: Record<string, OAuthCredential>;
 }
 
+/** Options for `FileTokenStore`. */
 export interface FileTokenStoreOptions {
   /** Absolute path of the JSON file. Required — the library reads no env. */
   path: string;
 }
 
+/** JSON-file `TokenStore` holding one or more mailboxes' credentials plus a default. Written with mode 0600. */
 export class FileTokenStore implements TokenStore {
+  /** Absolute path of the credentials file. */
   readonly path: string;
 
+  /** Does not touch the filesystem; the file is created on first `save`. */
   constructor(opts: FileTokenStoreOptions) {
     this.path = opts.path;
   }
 
+  /** Parse the file, tolerating a missing file (empty store) but not malformed JSON. */
   private async read(): Promise<FileShape> {
     try {
       const raw = await Deno.readTextFile(this.path);
@@ -46,6 +51,7 @@ export class FileTokenStore implements TokenStore {
     }
   }
 
+  /** Write atomically via a temp file and rename, mode 0600. */
   private async write(file: FileShape): Promise<void> {
     await Deno.mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const tmp = `${this.path}.tmp-${crypto.randomUUID()}`;
@@ -62,6 +68,7 @@ export class FileTokenStore implements TokenStore {
     return file.accounts[key] ?? null;
   }
 
+  /** Insert or replace the credential for `cred.email`; the first account saved becomes the default. */
   async save(cred: OAuthCredential): Promise<void> {
     const file = await this.read();
     const key = cred.email.toLowerCase();
@@ -70,6 +77,7 @@ export class FileTokenStore implements TokenStore {
     await this.write(file);
   }
 
+  /** Forget `account`; if it was the default, the next remaining account becomes default. */
   async delete(account: string): Promise<void> {
     const file = await this.read();
     const key = account.toLowerCase();
@@ -82,10 +90,12 @@ export class FileTokenStore implements TokenStore {
     return Object.keys((await this.read()).accounts);
   }
 
+  /** The account used when no `account` is given. */
   async defaultAccount(): Promise<string | undefined> {
     return (await this.read()).default;
   }
 
+  /** Make `account` the default. Throws if it is not in the store. */
   async setDefault(account: string): Promise<void> {
     const file = await this.read();
     const key = account.toLowerCase();
@@ -106,12 +116,14 @@ export class MemoryTokenStore implements TokenStore {
     const key = account?.toLowerCase() ?? this.defaultKey;
     return Promise.resolve(key ? this.accounts.get(key) ?? null : null);
   }
+  /** Insert or replace; the first account saved becomes the default. */
   save(cred: OAuthCredential): Promise<void> {
     const key = cred.email.toLowerCase();
     this.accounts.set(key, cred);
     this.defaultKey ??= key;
     return Promise.resolve();
   }
+  /** Forget `account`; if it was the default, the next remaining account becomes default. */
   delete(account: string): Promise<void> {
     this.accounts.delete(account.toLowerCase());
     return Promise.resolve();

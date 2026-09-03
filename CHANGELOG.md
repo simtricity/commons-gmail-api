@@ -3,6 +3,12 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.2.1] - 2026-09-03
+
+### Changed
+
+- JSDoc on every exported symbol and member (was 59% on JSR's score). No code changes.
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
@@ -31,5 +37,6 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 - CLI: `login`, `logout`, `whoami`, `accounts`, `search`, `attachments list|fetch`, `--json` on
   every command.
 
+[0.2.1]: https://github.com/simtricity/commons-gmail-api/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/simtricity/commons-gmail-api/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/simtricity/commons-gmail-api/releases/tag/v0.1.0

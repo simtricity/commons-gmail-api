@@ -8,6 +8,7 @@ import type { GmailClient } from "./client.ts";
 import { sha256Hex } from "./mime.ts";
 import type { AttachmentRef, Manifest, ManifestEntry } from "./types.ts";
 
+/** Options for `fetchThreadAttachments` and `fetchMessageAttachments`. */
 export interface FetchAttachmentsOptions {
   /** Directory to write into. Created if missing. */
   outDir: string;
@@ -56,6 +57,7 @@ export function disambiguate(basename: string, taken: Set<string>): string {
 
 /** What `scanExisting` found in a directory: file sizes by name, and prior sha256s by name. */
 export interface ExistingIndex {
+  /** Absolute path of the directory that was scanned. */
   dir: string;
   /** Byte size of every regular file in `dir`, excluding `manifest.json`. */
   sizes: Map<string, number>;

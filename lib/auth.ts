@@ -44,6 +44,7 @@ export function parseClientSecret(
   return { clientId, clientSecret };
 }
 
+/** Read a Google OAuth client-secret JSON file (Desktop-app client) and parse it. Never logs contents. */
 export async function loadClientSecretFile(
   path: string,
 ): Promise<ClientSecret> {
@@ -145,6 +146,7 @@ function bindCallback(port: number, expectedState: string): {
   return { code, close: () => controller.abort() };
 }
 
+/** Build the Google OAuth authorization URL for a PKCE (S256) code flow requesting exactly `scopes`, offline access, and a consent prompt. */
 export function buildAuthUrl(input: {
   clientId: string;
   redirectUri: string;
@@ -166,7 +168,9 @@ export function buildAuthUrl(input: {
   });
 }
 
+/** Options for `loginInteractive`. */
 export interface LoginOptions {
+  /** The Desktop-app OAuth client to sign in with. */
   clientSecret: ClientSecret;
   /** Defaults to `[SCOPE_READONLY]`. Widening is a deliberate caller decision. */
   scopes?: string[];
@@ -178,6 +182,7 @@ export interface LoginOptions {
   log?: (line: string) => void;
   /** Reject a login that lands on a different mailbox. */
   expectedEmail?: string;
+  /** Give up waiting for the browser after this many milliseconds. */
   timeoutMs?: number;
 }
 
