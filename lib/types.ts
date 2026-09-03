@@ -148,6 +148,10 @@ export interface Manifest {
   fetchedAt: string;
   outDir: string;
   files: ManifestEntry[];
-  /** Attachments present but excluded by `include`/`inline` rules. */
+  /**
+   * Attachments present in the source but not written: excluded by `include`/`filenames`/
+   * `inline`/`maxBytes` rules, or already on disk when `skipExisting` is set (reason starts
+   * `already in <dir>`).
+   */
   skipped: { messageId: string; filename: string; reason: string }[];
 }

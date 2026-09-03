@@ -4,11 +4,13 @@ import {
   decodeBase64Url,
   disambiguate,
   listAttachments,
-  type Message,
+  makeSelector,
   MemoryTokenStore,
+  type Message,
   parseClientSecret,
   parseGmailId,
   safeBasename,
+  scanExisting,
   SCOPE_READONLY,
   sha256Hex,
   summarize,
@@ -34,7 +36,10 @@ const fixture: Message = {
             mimeType: "image/png",
             filename: "image001.png",
             headers: [
-              { name: "Content-Disposition", value: "inline; filename=image001.png" },
+              {
+                name: "Content-Disposition",
+                value: "inline; filename=image001.png",
+              },
               { name: "Content-ID", value: "<img1>" },
             ],
             body: { attachmentId: "ATT-INLINE", size: 1234 },
@@ -99,7 +104,10 @@ Deno.test("parseGmailId accepts hex ids and legacy URLs, rejects FMfcgz tokens",
 Deno.test("safeBasename and disambiguate", () => {
   assertEquals(safeBasename("../evil/../x.pdf"), ".._evil_.._x.pdf");
   assertEquals(safeBasename(""), "attachment");
-  assertEquals(safeBasename("Acme GESA July 2026 (1).xlsx"), "Acme GESA July 2026 (1).xlsx");
+  assertEquals(
+    safeBasename("Acme GESA July 2026 (1).xlsx"),
+    "Acme GESA July 2026 (1).xlsx",
+  );
   const taken = new Set(["a.pdf", "a (2).pdf"]);
   assertEquals(disambiguate("a.pdf", taken), "a (3).pdf");
   assertEquals(disambiguate("b.pdf", taken), "b.pdf");
@@ -107,10 +115,18 @@ Deno.test("safeBasename and disambiguate", () => {
 });
 
 Deno.test("parseClientSecret accepts installed/web/bare shapes and hides contents on error", () => {
-  const s = parseClientSecret(JSON.stringify({ installed: { client_id: "id", client_secret: "sec" } }));
+  const s = parseClientSecret(
+    JSON.stringify({ installed: { client_id: "id", client_secret: "sec" } }),
+  );
   assertEquals(s, { clientId: "id", clientSecret: "sec" });
-  assertEquals(parseClientSecret('{"web":{"client_id":"a","client_secret":"b"}}').clientId, "a");
-  assertEquals(parseClientSecret('{"client_id":"a","client_secret":"b"}').clientSecret, "b");
+  assertEquals(
+    parseClientSecret('{"web":{"client_id":"a","client_secret":"b"}}').clientId,
+    "a",
+  );
+  assertEquals(
+    parseClientSecret('{"client_id":"a","client_secret":"b"}').clientSecret,
+    "b",
+  );
   const err = assertThrows(() => parseClientSecret('{"client_id":"leaked"}', "/p/secret.json"));
   assertEquals((err as Error).message.includes("leaked"), false);
 });
@@ -126,7 +142,10 @@ Deno.test("buildAuthUrl requests exactly the scopes given, offline, with PKCE S2
   assertEquals(url.searchParams.get("scope"), SCOPE_READONLY);
   assertEquals(url.searchParams.get("access_type"), "offline");
   assertEquals(url.searchParams.get("code_challenge_method"), "S256");
-  assertEquals(url.searchParams.get("redirect_uri"), "http://127.0.0.1:8731/callback");
+  assertEquals(
+    url.searchParams.get("redirect_uri"),
+    "http://127.0.0.1:8731/callback",
+  );
 });
 
 Deno.test("MemoryTokenStore: first save becomes default, keys are case-insensitive", async () => {
@@ -143,4 +162,62 @@ Deno.test("MemoryTokenStore: first save becomes default, keys are case-insensiti
   assertEquals((await store.load())?.email, "Ops@Example.com");
   assertEquals((await store.load("ops@example.com"))?.email, "Ops@Example.com");
   assertEquals(await store.list(), ["ops@example.com"]);
+});
+
+Deno.test("makeSelector: skipExisting applies after include/inline/maxBytes and quotes prior sha256", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeFile(`${dir}/invoice.pdf`, new Uint8Array(100));
+    await Deno.writeFile(`${dir}/stale.pdf`, new Uint8Array(7)); // wrong size → refetch
+    await Deno.writeTextFile(
+      `${dir}/manifest.json`,
+      JSON.stringify({
+        files: [{ savedAs: "invoice.pdf", sha256: "abcdef0123456789ff" }],
+      }),
+    );
+    const existing = await scanExisting(dir);
+    assertEquals(existing.sizes.get("invoice.pdf"), 100);
+    assertEquals(existing.sizes.has("manifest.json"), false);
+
+    const ref = (filename: string, size: number, inline = false) => ({
+      messageId: "m1",
+      attachmentId: "a",
+      mimeType: "application/pdf",
+      filename,
+      size,
+      inline,
+    });
+    const skip = makeSelector({
+      outDir: dir,
+      include: "*.pdf",
+      skipExisting: true,
+    }, existing);
+    assertEquals(
+      skip(ref("invoice.pdf", 100)),
+      `already in ${existing.dir} (sha256 abcdef012345…)`,
+    );
+    assertEquals(skip(ref("stale.pdf", 100)), null); // size differs → fetch
+    assertEquals(skip(ref("sheet.xlsx", 5)), "no --include match"); // glob first, not "already present"
+    assertEquals(skip(ref("logo.png", 3, true)), "inline");
+
+    const noSha = makeSelector({ outDir: dir, skipExisting: true }, {
+      ...existing,
+      sha256: new Map(),
+    });
+    assertEquals(
+      noSha(ref("invoice.pdf", 100)),
+      `already in ${existing.dir} (name + size match)`,
+    );
+
+    const missing = await scanExisting(`${dir}/does-not-exist`);
+    assertEquals(missing.sizes.size, 0);
+    assertEquals(
+      makeSelector({ outDir: dir, skipExisting: true }, missing)(
+        ref("invoice.pdf", 100),
+      ),
+      null,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

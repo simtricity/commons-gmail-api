@@ -14,7 +14,8 @@
  *   search       -q <gmail query> [--max N]       Message ids + metadata. No bodies.
  *   attachments list  --thread <id> | --message <id>
  *   attachments fetch --thread <id> | --message <id> --out <dir>
- *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N] [--dry-run]
+ *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
+ *                [--skip-existing [dir]] [--dry-run]
  *
  * Global options:
  *   --account <email>   Mailbox to act as (default: the store's default)
@@ -33,7 +34,18 @@ import * as commands from "./commands.ts";
 import { GmailApiError, NotSignedInError, OAuthError } from "../lib/mod.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["account", "default", "q", "thread", "message", "out", "max", "max-bytes"],
+  // --skip-existing takes an optional dir; bare flag parses as "" → use --out
+  string: [
+    "account",
+    "default",
+    "q",
+    "thread",
+    "message",
+    "out",
+    "max",
+    "max-bytes",
+    "skip-existing",
+  ],
   collect: ["include", "filename"],
   boolean: ["help", "json", "inline", "dry-run"],
   alias: { h: "help" },
@@ -55,7 +67,9 @@ Commands:
   attachments list  --thread <id> | --message <id>
   attachments fetch --thread <id> | --message <id> --out <dir>
                [--include <glob>]... [--filename <exact>]... [--inline]
-               [--max-bytes N] [--dry-run]
+               [--max-bytes N] [--skip-existing [dir]] [--dry-run]
+               --skip-existing: don't re-download files already in dir (default --out),
+               matched on name + size, confirmed against a prior manifest.json
 
 Options:
   --account <email>   Mailbox to act as (default: store default)
@@ -88,7 +102,10 @@ try {
       break;
     case "search":
       if (!args.q) throw new Error("search needs -q <gmail query>");
-      await commands.search(ctx, { q: args.q, max: args.max ? Number(args.max) : 20 });
+      await commands.search(ctx, {
+        q: args.q,
+        max: args.max ? Number(args.max) : 20,
+      });
       break;
     case "attachments": {
       const target = { thread: args.thread, message: args.message };
@@ -105,6 +122,9 @@ try {
           filenames: filenames.length ? filenames : undefined,
           includeInline: args.inline,
           maxBytes: args["max-bytes"] ? Number(args["max-bytes"]) : undefined,
+          skipExisting: args["skip-existing"] === undefined
+            ? undefined
+            : (args["skip-existing"] || true),
           dryRun: args["dry-run"],
         });
       } else {
@@ -117,7 +137,10 @@ try {
       Deno.exit(1);
   }
 } catch (e) {
-  if (e instanceof NotSignedInError || e instanceof OAuthError || e instanceof GmailApiError) {
+  if (
+    e instanceof NotSignedInError || e instanceof OAuthError ||
+    e instanceof GmailApiError
+  ) {
     console.error(`error: ${e.message}`);
   } else if (e instanceof Error) {
     console.error(`error: ${e.message}`);

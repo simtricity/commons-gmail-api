@@ -1,14 +1,20 @@
 {
   "name": "@simtricity-commons/gmail-api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "exports": "./mod.ts",
   "publish": {
-    "exclude": ["tests/", "cli/", "examples/", ".github/", "CLAUDE.md"]
+    "exclude": [
+      "tests/",
+      "cli/",
+      "examples/",
+      ".github/",
+      "CLAUDE.md"
+    ]
   },
   "tasks": {
     "cli": "deno run --allow-net --allow-env --allow-read --allow-write --allow-run=open,xdg-open cli/mod.ts",
-    "test": "deno test tests/unit-test.ts",
+    "test": "deno test --allow-read --allow-write tests/unit-test.ts",
     "test:live": "deno test --allow-net --allow-env --allow-read --allow-write tests/live-test.ts",
     "check": "deno check mod.ts cli/mod.ts tests/unit-test.ts tests/live-test.ts examples/thread-attachments.ts",
     "publish:dry": "deno publish --dry-run --allow-dirty"
@@ -19,5 +25,8 @@
     "@std/cli/parse-args": "jsr:@std/cli@^1.0.17/parse-args",
     "@std/path": "jsr:@std/path@^1.1.4",
     "@std/fs": "jsr:@std/fs@^1.0.19"
+  },
+  "fmt": {
+    "lineWidth": 100
   }
 }
