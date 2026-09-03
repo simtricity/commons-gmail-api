@@ -6,11 +6,7 @@
  * @module
  */
 
-import {
-  isAccessTokenStale,
-  refreshAccessToken,
-  revokeToken,
-} from "./auth.ts";
+import { isAccessTokenStale, refreshAccessToken, revokeToken } from "./auth.ts";
 import { GmailApiError, NotSignedInError, OAuthError } from "./errors.ts";
 import { decodeBase64Url, listAttachments } from "./mime.ts";
 import type {
@@ -64,9 +60,7 @@ export class GmailClient {
     const loaded = await this.opts.store.load(this.account);
     if (!loaded) {
       throw new NotSignedInError(
-        this.account
-          ? `Not signed in as ${this.account}. Run login.`
-          : "Not signed in. Run login.",
+        this.account ? `Not signed in as ${this.account}. Run login.` : "Not signed in. Run login.",
       );
     }
     this.cred = loaded;
@@ -105,7 +99,11 @@ export class GmailClient {
       return this.get<T>(path, false);
     }
     if (!res.ok) {
-      throw new GmailApiError(res.status, path, await res.text().catch(() => ""));
+      throw new GmailApiError(
+        res.status,
+        path,
+        await res.text().catch(() => ""),
+      );
     }
     return await res.json() as T;
   }
@@ -139,7 +137,11 @@ export class GmailClient {
    */
   listMessages(
     q: string,
-    opts: { maxResults?: number; pageToken?: string; includeSpamTrash?: boolean } = {},
+    opts: {
+      maxResults?: number;
+      pageToken?: string;
+      includeSpamTrash?: boolean;
+    } = {},
   ): Promise<MessageListResponse> {
     const params = new URLSearchParams({ q });
     if (opts.maxResults) params.set("maxResults", String(opts.maxResults));
@@ -155,7 +157,9 @@ export class GmailClient {
   }
 
   getThread(id: string, format: MessageFormat = "full"): Promise<Thread> {
-    return this.get<Thread>(`/threads/${encodeURIComponent(id)}?format=${format}`);
+    return this.get<Thread>(
+      `/threads/${encodeURIComponent(id)}?format=${format}`,
+    );
   }
 
   /** Attachments in one message. Ids are ephemeral: fetch, use, discard. */
@@ -170,11 +174,12 @@ export class GmailClient {
   }
 
   /** Raw bytes of one attachment. */
-  async getAttachment(messageId: string, attachmentId: string): Promise<Uint8Array> {
+  async getAttachment(
+    messageId: string,
+    attachmentId: string,
+  ): Promise<Uint8Array> {
     const res = await this.get<{ data: string; size: number }>(
-      `/messages/${encodeURIComponent(messageId)}/attachments/${
-        encodeURIComponent(attachmentId)
-      }`,
+      `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
     );
     return decodeBase64Url(res.data);
   }

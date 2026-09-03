@@ -27,7 +27,8 @@ export function listAttachments(msg: Message): AttachmentRef[] {
   const walk = (part?: MessagePart) => {
     if (!part) return;
     if (part.body?.attachmentId && part.filename) {
-      const disposition = header(part, "content-disposition")?.toLowerCase() ?? "";
+      const disposition = header(part, "content-disposition")?.toLowerCase() ??
+        "";
       const contentId = header(part, "content-id");
       out.push({
         messageId: msg.id,
@@ -69,7 +70,12 @@ export interface MessageSummary {
   from: string;
   to: string;
   subject: string;
-  attachments: { filename: string; mimeType: string; size: number; inline: boolean }[];
+  attachments: {
+    filename: string;
+    mimeType: string;
+    size: number;
+    inline: boolean;
+  }[];
 }
 
 /**

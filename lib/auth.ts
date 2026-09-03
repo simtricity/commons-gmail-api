@@ -23,7 +23,10 @@ const PROFILE_ENDPOINT = "https://gmail.googleapis.com/gmail/v1/users/me/profile
  *
  * Errors name the source, never the contents.
  */
-export function parseClientSecret(raw: string, source = "client secret"): ClientSecret {
+export function parseClientSecret(
+  raw: string,
+  source = "client secret",
+): ClientSecret {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -31,7 +34,8 @@ export function parseClientSecret(raw: string, source = "client secret"): Client
     throw new OAuthError(`Could not parse ${source} as JSON.`);
   }
   const holder = parsed as Record<string, Record<string, string> | undefined>;
-  const block = holder.installed ?? holder.web ?? (parsed as Record<string, string>);
+  const block = holder.installed ?? holder.web ??
+    (parsed as Record<string, string>);
   const clientId = block?.client_id;
   const clientSecret = block?.client_secret;
   if (!clientId || !clientSecret) {
@@ -40,7 +44,9 @@ export function parseClientSecret(raw: string, source = "client secret"): Client
   return { clientId, clientSecret };
 }
 
-export async function loadClientSecretFile(path: string): Promise<ClientSecret> {
+export async function loadClientSecretFile(
+  path: string,
+): Promise<ClientSecret> {
   let raw: string;
   try {
     raw = await Deno.readTextFile(path);
@@ -59,7 +65,10 @@ function base64url(bytes: Uint8Array): string {
 }
 
 async function sha256Base64Url(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
   return base64url(new Uint8Array(digest));
 }
 
@@ -94,14 +103,19 @@ function bindCallback(port: number, expectedState: string): {
       onListen() {},
     }, (req) => {
       const url = new URL(req.url);
-      if (url.pathname !== "/callback") return new Response("Not found", { status: 404 });
+      if (url.pathname !== "/callback") {
+        return new Response("Not found", { status: 404 });
+      }
       const html = { headers: { "Content-Type": "text/html" } };
       // Validate `state` BEFORE accepting the code: otherwise any page in the browser
       // could hand us an authorisation code for a mailbox that isn't the user's.
       if (url.searchParams.get("state") !== expectedState) {
         resolveCode(null);
         return new Response(
-          closeTabPage("Sign-in did not complete", "The callback did not match this sign-in."),
+          closeTabPage(
+            "Sign-in did not complete",
+            "The callback did not match this sign-in.",
+          ),
           { status: 400, ...html },
         );
       }
@@ -110,12 +124,18 @@ function bindCallback(port: number, expectedState: string): {
       if (err || !got) {
         resolveCode(null);
         return new Response(
-          closeTabPage("Sign-in did not complete", err ?? "No authorisation code arrived."),
+          closeTabPage(
+            "Sign-in did not complete",
+            err ?? "No authorisation code arrived.",
+          ),
           { status: 400, ...html },
         );
       }
       resolveCode(got);
-      return new Response(closeTabPage("Signed in to Gmail", "You can close this tab."), html);
+      return new Response(
+        closeTabPage("Signed in to Gmail", "You can close this tab."),
+        html,
+      );
     });
   } catch {
     throw new OAuthError(
@@ -176,7 +196,9 @@ function defaultOpenBrowser(url: string): boolean {
 }
 
 /** Interactive login. Returns the credential; the caller decides where it is stored. */
-export async function loginInteractive(opts: LoginOptions): Promise<OAuthCredential> {
+export async function loginInteractive(
+  opts: LoginOptions,
+): Promise<OAuthCredential> {
   const log = opts.log ?? ((l) => console.error(l));
   const scopes = opts.scopes ?? [SCOPE_READONLY];
   const redirectUri = `http://127.0.0.1:${opts.port}/callback`;
@@ -195,7 +217,9 @@ export async function loginInteractive(opts: LoginOptions): Promise<OAuthCredent
     scopes,
   });
 
-  log(`Signing in to Google (${scopes.map((s) => s.split("/").at(-1)).join(", ")})`);
+  log(
+    `Signing in to Google (${scopes.map((s) => s.split("/").at(-1)).join(", ")})`,
+  );
   log(`  → ${authUrl}`);
   const opened = (opts.openBrowser ?? defaultOpenBrowser)(authUrl);
   if (opened === false) log("  (open the URL above in a browser)");
@@ -207,7 +231,9 @@ export async function loginInteractive(opts: LoginOptions): Promise<OAuthCredent
   ]);
   // Let the browser receive the response body before the listener goes away.
   setTimeout(close, 250);
-  if (!code) throw new OAuthError("Sign-in did not complete (no authorisation code).");
+  if (!code) {
+    throw new OAuthError("Sign-in did not complete (no authorisation code).");
+  }
 
   const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
@@ -222,7 +248,9 @@ export async function loginInteractive(opts: LoginOptions): Promise<OAuthCredent
     }),
   });
   if (!res.ok) {
-    throw new OAuthError(`Token exchange failed (${res.status}): ${await res.text().catch(() => "")}`);
+    throw new OAuthError(
+      `Token exchange failed (${res.status}): ${await res.text().catch(() => "")}`,
+    );
   }
   const tok = await res.json() as {
     access_token: string;
@@ -238,17 +266,23 @@ export async function loginInteractive(opts: LoginOptions): Promise<OAuthCredent
   }
 
   const email = await fetchProfileEmail(tok.access_token);
-  if (opts.expectedEmail && email.toLowerCase() !== opts.expectedEmail.toLowerCase()) {
+  if (
+    opts.expectedEmail &&
+    email.toLowerCase() !== opts.expectedEmail.toLowerCase()
+  ) {
     // Revoke immediately: a refused login must leave no live grant behind.
     await revokeToken(tok.refresh_token).catch(() => {});
-    throw new OAuthError(`Signed in as ${email}, expected ${opts.expectedEmail}. Grant revoked.`);
+    throw new OAuthError(
+      `Signed in as ${email}, expected ${opts.expectedEmail}. Grant revoked.`,
+    );
   }
 
   const now = new Date();
   return {
     refreshToken: tok.refresh_token,
     accessToken: tok.access_token,
-    accessTokenExpiresAt: new Date(now.getTime() + tok.expires_in * 1000).toISOString(),
+    accessTokenExpiresAt: new Date(now.getTime() + tok.expires_in * 1000)
+      .toISOString(),
     email,
     scope: tok.scope,
     savedAt: now.toISOString(),
@@ -259,14 +293,21 @@ async function fetchProfileEmail(accessToken: string): Promise<string> {
   const res = await fetch(PROFILE_ENDPOINT, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new OAuthError(`Could not read mailbox profile (${res.status}).`);
+  if (!res.ok) {
+    throw new OAuthError(`Could not read mailbox profile (${res.status}).`);
+  }
   const data = await res.json() as { emailAddress?: string };
-  if (!data.emailAddress) throw new OAuthError("Profile returned no emailAddress.");
+  if (!data.emailAddress) {
+    throw new OAuthError("Profile returned no emailAddress.");
+  }
   return data.emailAddress;
 }
 
 /** Access token stale (or about to be) — refresh 60s early. */
-export function isAccessTokenStale(cred: OAuthCredential, now: Date = new Date()): boolean {
+export function isAccessTokenStale(
+  cred: OAuthCredential,
+  now: Date = new Date(),
+): boolean {
   return new Date(cred.accessTokenExpiresAt).getTime() - now.getTime() < 60_000;
 }
 
@@ -286,13 +327,16 @@ export async function refreshAccessToken(
     }),
   });
   if (!res.ok) {
-    throw new OAuthError(`Google rejected the stored credential (${res.status}).`);
+    throw new OAuthError(
+      `Google rejected the stored credential (${res.status}).`,
+    );
   }
   const tok = await res.json() as { access_token: string; expires_in: number };
   return {
     ...cred,
     accessToken: tok.access_token,
-    accessTokenExpiresAt: new Date(Date.now() + tok.expires_in * 1000).toISOString(),
+    accessTokenExpiresAt: new Date(Date.now() + tok.expires_in * 1000)
+      .toISOString(),
   };
 }
 

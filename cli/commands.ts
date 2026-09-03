@@ -27,7 +27,9 @@ export interface Context {
   store: FileTokenStore;
 }
 
-export function contextFromEnv(input: { account?: string; json?: boolean }): Context {
+export function contextFromEnv(
+  input: { account?: string; json?: boolean },
+): Context {
   const home = Deno.env.get("HOME") ?? ".";
   const clientSecretPath = Deno.env.get("GMAIL_CLIENT_SECRET_PATH") ??
     `${home}/.simt/gmail-api/client-secret.json`;
@@ -71,10 +73,16 @@ export async function login(ctx: Context): Promise<void> {
     openBrowser: ctx.noBrowser ? () => false : undefined,
   });
   await ctx.store.save(cred);
-  out(ctx, { email: cred.email, scope: cred.scope, store: ctx.credentialsPath }, () => {
-    console.log(`Signed in as ${cred.email} (${cred.scope.split("/").at(-1)})`);
-    console.log(`Credential stored at ${ctx.credentialsPath}`);
-  });
+  out(
+    ctx,
+    { email: cred.email, scope: cred.scope, store: ctx.credentialsPath },
+    () => {
+      console.log(
+        `Signed in as ${cred.email} (${cred.scope.split("/").at(-1)})`,
+      );
+      console.log(`Credential stored at ${ctx.credentialsPath}`);
+    },
+  );
 }
 
 export async function logout(ctx: Context): Promise<void> {
@@ -130,7 +138,10 @@ export async function whoami(ctx: Context): Promise<void> {
   if (!ok) Deno.exit(2);
 }
 
-export async function accounts(ctx: Context, opts: { setDefault?: string }): Promise<void> {
+export async function accounts(
+  ctx: Context,
+  opts: { setDefault?: string },
+): Promise<void> {
   if (opts.setDefault) await ctx.store.setDefault(opts.setDefault);
   const list = await ctx.store.list();
   const def = await ctx.store.defaultAccount();
@@ -140,27 +151,39 @@ export async function accounts(ctx: Context, opts: { setDefault?: string }): Pro
   });
 }
 
-export async function search(ctx: Context, opts: { q: string; max: number }): Promise<void> {
+export async function search(
+  ctx: Context,
+  opts: { q: string; max: number },
+): Promise<void> {
   const gmail = await client(ctx);
   const page = await gmail.listMessages(opts.q, { maxResults: opts.max });
   const hits: ReturnType<typeof summarize>[] = [];
   for (const m of page.messages ?? []) {
     hits.push(summarize(await gmail.getMessage(m.id, "metadata")));
   }
-  out(ctx, { query: opts.q, returned: hits.length, hasMore: !!page.nextPageToken, hits }, () => {
+  out(ctx, {
+    query: opts.q,
+    returned: hits.length,
+    hasMore: !!page.nextPageToken,
+    hits,
+  }, () => {
     for (const h of hits) {
       const att = h.attachments.filter((a) => !a.inline).map((a) => a.filename);
       console.log(`${h.id}  ${h.date}\n  ${h.from}\n  ${h.subject}`);
       if (att.length) console.log(`  📎 ${att.join(", ")}`);
     }
-    if (page.nextPageToken) console.log(`(more results — narrow the query or raise --max)`);
+    if (page.nextPageToken) {
+      console.log(`(more results — narrow the query or raise --max)`);
+    }
   });
 }
 
 type Target = { thread?: string; message?: string };
 
 function resolveTarget(t: Target): { threadId?: string; messageId?: string } {
-  if (t.thread && t.message) throw new Error("pass --thread or --message, not both");
+  if (t.thread && t.message) {
+    throw new Error("pass --thread or --message, not both");
+  }
   if (t.thread) return { threadId: parseGmailId(t.thread) };
   if (t.message) return { messageId: parseGmailId(t.message) };
   throw new Error("pass --thread <id> or --message <id>");
@@ -197,11 +220,17 @@ export async function attachmentsFetch(
     : await fetchMessageAttachments(gmail, target.messageId!, withLog);
   out(ctx, manifest, () => {
     const verb = opts.dryRun ? "would write" : "wrote";
-    console.log(`${verb} ${manifest.files.length} file(s) to ${manifest.outDir}`);
+    console.log(
+      `${verb} ${manifest.files.length} file(s) to ${manifest.outDir}`,
+    );
     for (const f of manifest.files) {
-      console.log(`  ${f.savedAs}  ${f.bytes} B${f.sha256 ? `  ${f.sha256.slice(0, 12)}…` : ""}`);
+      console.log(
+        `  ${f.savedAs}  ${f.bytes} B${f.sha256 ? `  ${f.sha256.slice(0, 12)}…` : ""}`,
+      );
     }
-    for (const s of manifest.skipped) console.log(`  skipped ${s.filename} (${s.reason})`);
+    for (const s of manifest.skipped) {
+      console.log(`  skipped ${s.filename} (${s.reason})`);
+    }
     if (!opts.dryRun) console.log(`  manifest.json`);
   });
 }

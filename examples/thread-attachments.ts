@@ -18,5 +18,8 @@ const gmail = await GmailClient.fromStore({
   store: new FileTokenStore({ path: `${home}/.simt/gmail-api/credentials.json` }),
 });
 
-const manifest = await fetchThreadAttachments(gmail, threadId, { outDir, include: ["*.pdf", "*.xlsx"] });
+const manifest = await fetchThreadAttachments(gmail, threadId, {
+  outDir,
+  include: ["*.pdf", "*.xlsx"],
+});
 for (const f of manifest.files) console.log(`${f.savedAs}\t${f.bytes}\t${f.sha256}`);
