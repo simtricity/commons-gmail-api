@@ -6,6 +6,8 @@ thing the hosted Gmail connectors don't do.
 
 > Unofficial. Not affiliated with or endorsed by Google. Gmail is a trademark of Google LLC. ©
 > Simtricity Limited, MIT.
+>
+> [Changelog](https://github.com/simtricity/commons-gmail-api/blob/main/CHANGELOG.md) · [Issues](https://github.com/simtricity/commons-gmail-api/issues)
 
 ```ts
 import {
