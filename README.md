@@ -1,8 +1,8 @@
 # @simtricity-commons/gmail-api
 
 Typed Deno client + CLI for the Gmail REST API. Loopback OAuth (PKCE) for a Google "Desktop app"
-client, **read-only by default**, and thread-level attachment download with a sha256 manifest — the
-thing the hosted Gmail connectors don't do.
+client, **read-only by default**, thread-level attachment download with a sha256 manifest, and —
+behind a separate, opt-in grant — labels and drafts. Never send, trash or delete.
 
 > Unofficial. Not affiliated with or endorsed by Google. Gmail is a trademark of Google LLC. ©
 > Simtricity Limited, MIT.
@@ -49,6 +49,41 @@ deno task cli logout                     # revokes at Google, then deletes local
 Add `--json` to any command for machine-readable output. `--account <email>` picks a mailbox when
 more than one is signed in.
 
+## Writes: labels and drafts (0.3.0, opt-in)
+
+Writing needs a second grant and a separate import. The read-only credential is never widened.
+
+```bash
+deno task cli login --write     # consents to gmail.modify + gmail.compose; stored in credentials.modify.json
+deno task cli whoami --write    # proves the write grant; non-zero if absent
+deno task cli labels
+deno task cli label create organiser/2026/review          # creates parents too; idempotent
+deno task cli label apply organiser/2026/review --ids 18c9…,18ca…          # dry run
+deno task cli label apply organiser/2026/review --ids 18c9…,18ca… --apply  # ≤ 25 ids per call
+deno task cli draft create --reply-to 18c9f0a1b2d3e4f5 --body "Thanks, received."
+```
+
+```ts
+import { GmailClient, GmailWriter, FileTokenStore, loadClientSecretFile } from "@simtricity-commons/gmail-api";
+
+const gmail = await GmailClient.fromStore({
+  clientSecret: await loadClientSecretFile(`${home}/.simt/gmail-api/client-secret.json`),
+  store: new FileTokenStore({ path: `${home}/.simt/gmail-api/credentials.modify.json` }),
+});
+const w = new GmailWriter(gmail);
+const label = await w.ensureLabel("organiser/2026/review");
+await w.batchModifyMessages(ids, { addLabelIds: [label.id] }); // chunks at 1000, any length
+const draft = await w.createDraft({ replyToMessageId: id, text: "Thanks, received." }); // not sent
+```
+
+Guardrails, in the library: every write checks the granted scope locally and throws
+`InsufficientScopeError` before any request; `TRASH`, `SPAM` and `INBOX` are refused in any label
+change unless `allowSystem: true`; there is no send, trash or delete method. In the CLI: dry run
+unless `--apply`, 25 ids per call, system labels refused outright, and every applied write appends a
+JSON line to `~/.simt/gmail-api/writes.log`. Vendor quirks (parents not auto-created, 409 on
+duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`; the decision record is
+`SPEC-write-support.md`.
+
 ## Setup
 
 1. Google Cloud Console → APIs & Services → Credentials → **OAuth client ID, type Desktop app** →
@@ -65,8 +100,8 @@ more than one is signed in.
   consults `Deno.env`.
 - `TokenStore` is an interface. `FileTokenStore` is a plain persistent file; callers with a
   TTL/sweep policy or a keychain implement their own.
-- Scopes are a login option defaulting to `gmail.readonly`. The `GmailClient` only issues GETs, so a
-  wider scope buys nothing here — write support would be new code, on purpose.
+- Scopes are a login option defaulting to `gmail.readonly`. `GmailClient` only issues GETs; writes
+  live on `GmailWriter`, need `SCOPES_WRITE` at login, and are stored in a separate credential file.
 - Attachment ids are ephemeral. `listAttachments` output is fetch-then-use; never persist an id.
 - Filenames are written as sent (Gmail's `(1)` suffixes included); only path separators and control
   characters are replaced, and collisions get `(2)`, `(3)`….

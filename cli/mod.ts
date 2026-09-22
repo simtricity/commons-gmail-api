@@ -19,6 +19,14 @@
  *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
  *                [--skip-existing [dir]] [--dry-run]
  *
+ *   Writes (use the write grant from `login --write`; never send, trash or delete mail):
+ *   labels                                        List labels with ids
+ *   label create <name>                           Create (nested "a/b/c" creates parents); idempotent
+ *   label apply  <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply; max 25 ids
+ *   label remove <name> --ids a,b,c [--threads] [--apply]   System labels refused
+ *   draft create --to a@b --subject S --body TEXT | --reply-to <messageId> --body TEXT
+ *                Creates a draft only. Applied writes append to ~/.simt/gmail-api/writes.log
+ *
  * Global options:
  *   --account <email>   Mailbox to act as (default: the store's default)
  *   --json              Machine-readable output
@@ -48,9 +56,13 @@ const args = parseArgs(Deno.args, {
     "max",
     "max-bytes",
     "skip-existing",
+    "ids",
+    "subject",
+    "body",
+    "reply-to",
   ],
-  collect: ["include", "filename"],
-  boolean: ["help", "json", "inline", "dry-run", "write"],
+  collect: ["include", "filename", "to", "cc"],
+  boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads"],
   alias: { h: "help" },
 });
 
@@ -63,6 +75,10 @@ Usage: deno task cli <command> [options]
 
 Commands:
   login        [--account <email>] [--write]    Sign in via browser (gmail.readonly; --write adds modify+compose)
+  labels                                        List labels with ids
+  label create <name>                           Create label (parents too); idempotent   [write]
+  label apply|remove <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply   [write]
+  draft create --to <a> --subject <s> --body <t> | --reply-to <msgId> --body <t>        [write]
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
@@ -87,7 +103,13 @@ if (!command || args.help) {
   Deno.exit(command ? 0 : 1);
 }
 
-const ctx = commands.contextFromEnv({ account: args.account, json: args.json, write: args.write });
+// Write commands always use the write credential file.
+const WRITE_COMMANDS = ["label", "draft"];
+const ctx = commands.contextFromEnv({
+  account: args.account,
+  json: args.json,
+  write: args.write || WRITE_COMMANDS.includes(command ?? ""),
+});
 
 try {
   switch (command) {
@@ -135,6 +157,38 @@ try {
       }
       break;
     }
+    case "labels":
+      await commands.labels(ctx);
+      break;
+    case "label": {
+      const name = args._[2] !== undefined ? String(args._[2]) : undefined;
+      if (!name) throw new Error("label <create|apply|remove> <name>");
+      if (sub === "create") {
+        await commands.labelCreate(ctx, name);
+      } else if (sub === "apply" || sub === "remove") {
+        await commands.labelApply(ctx, {
+          name,
+          ids: String(args.ids ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+          remove: sub === "remove",
+          threads: args.threads,
+          apply: args.apply,
+        });
+      } else {
+        throw new Error("label needs a subcommand: create | apply | remove");
+      }
+      break;
+    }
+    case "draft":
+      if (sub !== "create") throw new Error("draft needs a subcommand: create");
+      if (!args.body) throw new Error("draft create needs --body <text>");
+      await commands.draftCreate(ctx, {
+        to: (args.to as string[] | undefined)?.map(String),
+        cc: (args.cc as string[] | undefined)?.map(String),
+        subject: args.subject,
+        text: args.body,
+        replyTo: args["reply-to"],
+      });
+      break;
     default:
       usage();
       Deno.exit(1);

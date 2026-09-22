@@ -35,12 +35,15 @@ email-ingress adapters and supplier-document pipelines). Consumers import from J
 
 ## Rules
 
-- Read-only stays the default. Adding a write method needs an explicit decision and a wider scope at
-  login; do not add one as a convenience.
+- Read-only stays the default. Writes exist only on `GmailWriter` (`lib/writes.ts`): labels and
+  drafts, decided in `SPEC-write-support.md` (2026-09-22). No send, trash or delete; adding any of
+  those is a new decision and a new spec. The write grant lives in `credentials.modify.json`, never
+  in `credentials.json`.
 - Never log or echo the client secret, refresh token, or attachment ids in error text.
 - Config lives in `~/.simt/gmail-api/` (Simtricity convention: `~/.simt/` holds all local tool
   config). `client-secret.json` is the Desktop-app OAuth client; `credentials.json` the per-mailbox
-  grants. Env overrides: `GMAIL_CLIENT_SECRET_PATH`, `GMAIL_API_CREDENTIALS`.
+  grants; `credentials.modify.json` the write grants (`login --write`). Env overrides:
+  `GMAIL_CLIENT_SECRET_PATH`, `GMAIL_API_CREDENTIALS`, `GMAIL_API_CREDENTIALS_MODIFY`.
 - Loopback port 8731 is claimed in `~/DEV_PORTS.md`.
 - **Do not push, tag, or `deno publish` without explicit go-ahead.** Publishing is by `v*` tag via
   `.github/workflows/publish.yml`. Run the workspace pre-publish leak checklist first.
@@ -50,11 +53,11 @@ email-ingress adapters and supplier-document pipelines). Consumers import from J
 
 ## Consumers and vendoring
 
-- The `simt-gmail` Claude skill (`~/.claude/skills/simt-gmail`) currently **vendors `lib/`** into
-  `scripts/lib/` (Cowork sandbox access to jsr.io unverified) and checks drift with
+- The `simt:gmail` skill (`~/code/anthropic/cc-marketplace/plugins/simt/skills/gmail`) **vendors `lib/`** into
+  `scripts/lib/` (hosted sandboxes return 403 for jsr.io, so this is permanent) and checks drift with
   `deno task verify-vendor`. After any `lib/` change, run `deno task vendor` in the skill folder and
-  update the version line in `scripts/lib/VENDORED.md`, until the skill reverts to the plain JSR
-  import.
+  update the version line in `scripts/lib/VENDORED.md`. The skill holds only the read-only
+  credential, so the vendored `GmailWriter` fails locally with `InsufficientScopeError`.
 - Planned: MGF supplier-paper pipelines, importing from JSR.
 - `skipExisting` (0.2.0) originated as a skill-side workaround; it now lives in `selector()` so the
   double-reporting the skill had to suppress is gone.

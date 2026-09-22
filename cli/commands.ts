@@ -9,6 +9,7 @@ import {
   fetchThreadAttachments,
   FileTokenStore,
   GmailClient,
+  GmailWriter,
   loadClientSecretFile,
   loginInteractive,
   parseGmailId,
@@ -258,4 +259,124 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── Writes (labels, drafts) — need --write / credentials.modify.json ────────
+
+/** Per-call ceiling for ids on the CLI. Bulk consumers use the library's batchModifyMessages. */
+export const CLI_MAX_IDS = 25;
+
+async function writer(ctx: Context): Promise<GmailWriter> {
+  if (!ctx.write) {
+    throw new Error(
+      "write commands need the write grant: run `login --write` (uses credentials.modify.json)",
+    );
+  }
+  return new GmailWriter(await client(ctx), { log: (l) => console.error(`  ${l}`) });
+}
+
+/** Append one JSON line per applied mutation next to the credential files. */
+async function logWrite(ctx: Context, entry: Record<string, unknown>): Promise<void> {
+  const path = ctx.credentialsPath.replace(/[^/]+$/, "writes.log");
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    account: ctx.account ?? null,
+    ...entry,
+  });
+  await Deno.writeTextFile(path, line + "\n", { append: true, mode: 0o600 });
+}
+
+export async function labels(ctx: Context): Promise<void> {
+  const gmail = await client(ctx);
+  const all = (await gmail.listLabels()).sort((a, b) => a.name.localeCompare(b.name));
+  out(ctx, { labels: all.map((l) => ({ id: l.id, name: l.name, type: l.type })) }, () => {
+    for (const l of all) {
+      console.log(`${l.id.padEnd(14)} ${l.type === "system" ? "· " : "  "}${l.name}`);
+    }
+  });
+}
+
+export async function labelCreate(ctx: Context, name: string): Promise<void> {
+  const w = await writer(ctx);
+  const existed = await w.findLabel(name);
+  const label = await w.ensureLabel(name);
+  if (!existed) await logWrite(ctx, { op: "label.create", name, id: label.id });
+  out(ctx, { label, created: !existed }, () => {
+    console.log(`${existed ? "exists" : "created"}  ${label.id}  ${label.name}`);
+  });
+}
+
+export async function labelApply(
+  ctx: Context,
+  opts: { name: string; ids: string[]; remove: boolean; threads: boolean; apply: boolean },
+): Promise<void> {
+  const w = await writer(ctx);
+  if (!opts.ids.length) throw new Error("--ids <a,b,c> is required");
+  if (opts.ids.length > CLI_MAX_IDS) {
+    throw new Error(`refusing ${opts.ids.length} ids; the CLI caps at ${CLI_MAX_IDS} per call`);
+  }
+  const label = await w.findLabel(opts.name);
+  if (!label) {
+    throw new Error(`no label named ${JSON.stringify(opts.name)}; run \`label create\` first`);
+  }
+  if (label.type === "system") throw new Error(`refusing system label ${label.name}`);
+  const change = opts.remove ? { removeLabelIds: [label.id] } : { addLabelIds: [label.id] };
+  const kind = opts.threads ? "thread" : "message";
+  const plan = {
+    op: opts.remove ? "label.remove" : "label.apply",
+    label: { id: label.id, name: label.name },
+    [`${kind}Ids`]: opts.ids,
+    count: opts.ids.length,
+  };
+  if (!opts.apply) {
+    out(ctx, { dryRun: true, ...plan }, () => {
+      console.log(
+        `DRY RUN — would ${
+          opts.remove ? "remove" : "apply"
+        } ${label.name} (${label.id}) on ${opts.ids.length} ${kind}(s). Re-run with --apply.`,
+      );
+    });
+    return;
+  }
+  if (opts.threads) {
+    for (const id of opts.ids) await w.modifyThread(id, change);
+  } else {
+    await w.batchModifyMessages(opts.ids, change);
+  }
+  await logWrite(ctx, plan);
+  out(ctx, { applied: true, ...plan }, () => {
+    console.log(
+      `${opts.remove ? "removed" : "applied"} ${label.name} on ${opts.ids.length} ${kind}(s)`,
+    );
+  });
+}
+
+export async function draftCreate(
+  ctx: Context,
+  opts: { to?: string[]; cc?: string[]; subject?: string; text: string; replyTo?: string },
+): Promise<void> {
+  const w = await writer(ctx);
+  const draft = await w.createDraft({
+    to: opts.to,
+    cc: opts.cc,
+    subject: opts.subject,
+    text: opts.text,
+    replyToMessageId: opts.replyTo,
+  });
+  const url = `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`;
+  await logWrite(ctx, {
+    op: "draft.create",
+    draftId: draft.id,
+    messageId: draft.message.id,
+    threadId: draft.message.threadId ?? null,
+    replyTo: opts.replyTo ?? null,
+  });
+  out(ctx, { draft, url, sent: false }, () => {
+    console.log(
+      `draft ${draft.id} created (message ${draft.message.id}${
+        draft.message.threadId ? `, thread ${draft.message.threadId}` : ""
+      }). Not sent.`,
+    );
+    console.log(url);
+  });
 }

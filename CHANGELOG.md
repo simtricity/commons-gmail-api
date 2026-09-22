@@ -3,6 +3,34 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.3.0] - 2026-09-22
+
+### Added — first release that can write to a mailbox (labels and drafts only)
+
+- **`GmailWriter`** (`lib/writes.ts`), separate from the read client. Needs a credential granted
+  with `SCOPES_WRITE` = `gmail.readonly` + `gmail.modify` + `gmail.compose`. Every method checks the
+  granted scope locally and throws `InsufficientScopeError` before any request.
+- Labels: `createLabel`, `ensureLabel` (creates missing parents of a nested name in order; 409 is
+  treated as "exists"), `updateLabel`, `deleteLabel`, `listLabels`/`findLabel`.
+- Messages: `modifyMessage`, `batchModifyMessages` (chunked at 1000, empty no-op), `modifyThread`.
+  `TRASH`, `SPAM`, `INBOX` are refused unless `allowSystem: true`.
+- Drafts: `createDraft` (plain text; reply mode sets threadId, In-Reply-To, References, To and
+  `Re:`), `deleteDraft`. **No send, trash or delete method exists.**
+- `GmailClient.request()` low-level transport (401 refresh-and-retry, 204 → undefined),
+  `grantedScopes()`, and a `fetch` option for tests. `GmailApiError.reason` (`rateLimitExceeded`
+  vs `insufficientPermissions` are both 403). `buildRawMessage`, `toBase64Url`.
+- CLI: `login --write` stores the write grant in `~/.simt/gmail-api/credentials.modify.json`
+  (`GMAIL_API_CREDENTIALS_MODIFY`), leaving `credentials.json` untouched; `whoami [--write]` reports
+  the grant; `labels`; `label create|apply|remove` (dry run unless `--apply`, max 25 ids, system
+  labels refused); `draft create`. Applied writes append to `~/.simt/gmail-api/writes.log`.
+- Tests: 7 offline writer tests with injected fetch; opt-in self-cleaning live write test
+  (`GMAIL_API_LIVE_WRITE=1 deno task test:live:write`).
+- `SPEC-write-support.md` (decision record) and write-side quirks in `GMAIL_API_NOTES.md`.
+
+### Changed
+
+- `get()` now delegates to `request()`; read behaviour unchanged (live read tests pass unmodified).
+
 ## [0.2.1] - 2026-09-03
 
 ### Changed

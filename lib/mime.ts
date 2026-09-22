@@ -145,7 +145,6 @@ export interface RawMessageInput {
 }
 
 function encodeHeaderWord(value: string): string {
-  // deno-lint-ignore no-control-regex
   if (/^[\x20-\x7e]*$/.test(value)) return value;
   return `=?UTF-8?B?${encodeBase64(new TextEncoder().encode(value))}?=`;
 }
