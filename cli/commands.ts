@@ -13,6 +13,7 @@ import {
   loginInteractive,
   parseGmailId,
   SCOPE_READONLY,
+  SCOPES_WRITE,
   summarize,
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
@@ -22,24 +23,30 @@ export interface Context {
   json: boolean;
   clientSecretPath: string;
   credentialsPath: string;
+  /** True when --write selected the modify/compose credential file. */
+  write: boolean;
   loopbackPort: number;
   noBrowser: boolean;
   store: FileTokenStore;
 }
 
 export function contextFromEnv(
-  input: { account?: string; json?: boolean },
+  input: { account?: string; json?: boolean; write?: boolean },
 ): Context {
   const home = Deno.env.get("HOME") ?? ".";
   const clientSecretPath = Deno.env.get("GMAIL_CLIENT_SECRET_PATH") ??
     `${home}/.simt/gmail-api/client-secret.json`;
-  const credentialsPath = Deno.env.get("GMAIL_API_CREDENTIALS") ??
-    `${home}/.simt/gmail-api/credentials.json`;
+  // The write grant lives in its own file so read-only consumers never inherit it.
+  const credentialsPath = input.write
+    ? Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY") ??
+      `${home}/.simt/gmail-api/credentials.modify.json`
+    : Deno.env.get("GMAIL_API_CREDENTIALS") ?? `${home}/.simt/gmail-api/credentials.json`;
   return {
     account: input.account ?? Deno.env.get("GMAIL_ACCOUNT") ?? undefined,
     json: input.json ?? false,
     clientSecretPath,
     credentialsPath,
+    write: input.write ?? false,
     loopbackPort: Number(Deno.env.get("GMAIL_API_LOOPBACK_PORT") ?? "8731"),
     noBrowser: Deno.env.get("GMAIL_NO_BROWSER") === "1",
     store: new FileTokenStore({ path: credentialsPath }),
@@ -67,7 +74,7 @@ async function client(ctx: Context): Promise<GmailClient> {
 export async function login(ctx: Context): Promise<void> {
   const cred = await loginInteractive({
     clientSecret: await secret(ctx),
-    scopes: [SCOPE_READONLY],
+    scopes: ctx.write ? [...SCOPES_WRITE] : [SCOPE_READONLY],
     port: ctx.loopbackPort,
     expectedEmail: ctx.account,
     openBrowser: ctx.noBrowser ? () => false : undefined,
@@ -78,7 +85,9 @@ export async function login(ctx: Context): Promise<void> {
     { email: cred.email, scope: cred.scope, store: ctx.credentialsPath },
     () => {
       console.log(
-        `Signed in as ${cred.email} (${cred.scope.split("/").at(-1)})`,
+        `Signed in as ${cred.email} (${
+          cred.scope.split(" ").map((x) => x.split("/").at(-1)).join(", ")
+        })`,
       );
       console.log(`Credential stored at ${ctx.credentialsPath}`);
     },
@@ -109,6 +118,8 @@ export async function whoami(ctx: Context): Promise<void> {
     accounts: await ctx.store.list(),
     defaultAccount: await ctx.store.defaultAccount(),
     requestedAccount: ctx.account ?? null,
+    grant: ctx.write ? "write" : "readonly",
+    scopes: (await ctx.store.load(ctx.account))?.scope.split(" ").filter(Boolean) ?? [],
   };
   let live: string | undefined;
   let ok = false;
@@ -125,6 +136,11 @@ export async function whoami(ctx: Context): Promise<void> {
   }
   out(ctx, report, () => {
     console.log(`runtime        ${report.runtime} on ${report.os}`);
+    console.log(
+      `grant          ${report.grant}: ${
+        (report.scopes as string[]).map((x) => x.split("/").at(-1)).join(", ") || "(none)"
+      }`,
+    );
     console.log(
       `client secret  ${ctx.clientSecretPath} ${report.clientSecretPresent ? "✓" : "✗ missing"}`,
     );

@@ -7,9 +7,11 @@
  *   deno task cli <command> [options]
  *
  * Commands:
- *   login        [--account <email>]              Sign in (browser). Read-only scope.
+ *   login        [--account <email>] [--write]    Sign in (browser). Read-only scope;
+ *                --write asks for gmail.modify + gmail.compose too and stores the grant
+ *                in credentials.modify.json, leaving the read-only credential untouched.
  *   logout       [--account <email>]              Revoke at Google and forget.
- *   whoami                                        Runtime, store, mailbox — one line each.
+ *   whoami       [--write]                        Runtime, store, grant, mailbox — one line each.
  *   accounts     [--default <email>]              List signed-in mailboxes / set default.
  *   search       -q <gmail query> [--max N]       Message ids + metadata. No bodies.
  *   attachments list  --thread <id> | --message <id>
@@ -25,6 +27,7 @@
  * Environment:
  *   GMAIL_CLIENT_SECRET_PATH   default ~/.simt/gmail-api/client-secret.json
  *   GMAIL_API_CREDENTIALS      default ~/.simt/gmail-api/credentials.json
+ *   GMAIL_API_CREDENTIALS_MODIFY  default ~/.simt/gmail-api/credentials.modify.json (--write)
  *   GMAIL_API_LOOPBACK_PORT    default 8731
  *   GMAIL_NO_BROWSER=1         print the auth URL instead of opening a browser
  */
@@ -47,7 +50,7 @@ const args = parseArgs(Deno.args, {
     "skip-existing",
   ],
   collect: ["include", "filename"],
-  boolean: ["help", "json", "inline", "dry-run"],
+  boolean: ["help", "json", "inline", "dry-run", "write"],
   alias: { h: "help" },
 });
 
@@ -59,9 +62,9 @@ function usage(): void {
 Usage: deno task cli <command> [options]
 
 Commands:
-  login        [--account <email>]              Sign in via browser (gmail.readonly)
+  login        [--account <email>] [--write]    Sign in via browser (gmail.readonly; --write adds modify+compose)
   logout       [--account <email>]              Revoke at Google and forget
-  whoami                                        Runtime, store, mailbox
+  whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
   search       -q <gmail query> [--max N]       Ids + metadata, no bodies
   attachments list  --thread <id> | --message <id>
@@ -76,7 +79,7 @@ Options:
   --json              Machine-readable output
   -h, --help          This help
 
-Env: GMAIL_CLIENT_SECRET_PATH, GMAIL_API_CREDENTIALS, GMAIL_API_LOOPBACK_PORT, GMAIL_NO_BROWSER`);
+Env: GMAIL_CLIENT_SECRET_PATH, GMAIL_API_CREDENTIALS, GMAIL_API_CREDENTIALS_MODIFY, GMAIL_API_LOOPBACK_PORT, GMAIL_NO_BROWSER`);
 }
 
 if (!command || args.help) {
@@ -84,7 +87,7 @@ if (!command || args.help) {
   Deno.exit(command ? 0 : 1);
 }
 
-const ctx = commands.contextFromEnv({ account: args.account, json: args.json });
+const ctx = commands.contextFromEnv({ account: args.account, json: args.json, write: args.write });
 
 try {
   switch (command) {
