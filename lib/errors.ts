@@ -25,6 +25,40 @@ export class GmailApiError extends Error {
     readonly body: string,
   ) {
     super(`Gmail API ${status} on ${path}${body ? `: ${body}` : ""}`);
+    this.reason = parseReason(body);
+  }
+  /**
+   * Google's machine-readable reason, e.g. `rateLimitExceeded`, `insufficientPermissions`,
+   * `notFound`. Quota exhaustion is a 403 with `rateLimitExceeded`, so branch on this, not status.
+   */
+  readonly reason?: string;
+}
+
+function parseReason(body: string): string | undefined {
+  try {
+    const j = JSON.parse(body) as {
+      error?: { errors?: { reason?: string }[]; status?: string };
+    };
+    return j.error?.errors?.[0]?.reason ?? j.error?.status;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A write was attempted with a credential whose grant lacks the needed scope. Thrown before any network call. */
+export class InsufficientScopeError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "InsufficientScopeError";
+  /**
+   * @param required The scope the operation needs.
+   * @param granted Scopes the credential actually holds.
+   */
+  constructor(readonly required: string, readonly granted: string[]) {
+    super(
+      `This credential does not grant ${required.split("/").at(-1)}. Granted: ${
+        granted.map((g) => g.split("/").at(-1)).join(", ") || "(none)"
+      }. Run login --write.`,
+    );
   }
 }
 

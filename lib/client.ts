@@ -1,8 +1,8 @@
 /**
  * `GmailClient` — typed reads against the Gmail REST API with transparent token refresh.
  *
- * Every method here is a GET. Write capability would need a wider scope at login AND
- * new methods; neither exists in this package by design.
+ * Every typed method here is a GET. Writes live on `GmailWriter` (`./writes.ts`), which needs a
+ * wider grant at login (`SCOPES_WRITE`) and is a separate import by design.
  * @module
  */
 
@@ -34,6 +34,8 @@ export interface GmailClientOptions {
   account?: string;
   /** Diagnostics (token refreshes etc). Default: silent. */
   log?: (line: string) => void;
+  /** Transport override for tests. Default: global `fetch`. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Read-only Gmail REST client. Refreshes access tokens on demand and retries once on 401. */
@@ -42,11 +44,13 @@ export class GmailClient {
   readonly account?: string;
   private cred: OAuthCredential | null = null;
   private readonly log: (line: string) => void;
+  private readonly fetchImpl: typeof globalThis.fetch;
 
   /** Construct without touching the store; credentials load lazily on first call. */
   constructor(private readonly opts: GmailClientOptions) {
     this.account = opts.account;
     this.log = opts.log ?? (() => {});
+    this.fetchImpl = opts.fetch ?? globalThis.fetch;
   }
 
   /** Load the credential now so a missing login fails before any work starts. */
@@ -59,6 +63,11 @@ export class GmailClient {
   /** The signed-in mailbox address. */
   async email(): Promise<string> {
     return (await this.credential()).email;
+  }
+
+  /** Scopes Google actually granted to this credential (a user can untick scopes at consent). */
+  async grantedScopes(): Promise<string[]> {
+    return (await this.credential()).scope.split(/\s+/).filter(Boolean);
   }
 
   /** Load the credential from the store once and cache it; throws `NotSignedInError` if absent. */
@@ -96,25 +105,54 @@ export class GmailClient {
     return cred.accessToken;
   }
 
-  /** Authenticated GET against the Gmail API; on 401 refreshes once and retries, then throws `GmailApiError`. */
-  private async get<T>(path: string, retry = true): Promise<T> {
+  /**
+   * Low-level authenticated request. On 401 refreshes the token once and retries; any other
+   * non-2xx throws `GmailApiError`. A 204 resolves to `undefined`. Prefer the typed methods;
+   * this exists for `GmailWriter` and for endpoints not yet wrapped.
+   * @param method HTTP method.
+   * @param path Path under `users/me`, e.g. `/labels`.
+   * @param body JSON body for POST/PUT/PATCH.
+   */
+  async request<T>(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    return await this.send<T>(method, path, body, true);
+  }
+
+  private async send<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    retry: boolean,
+  ): Promise<T> {
     const token = await this.accessToken();
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    const res = await this.fetchImpl(`${API_BASE}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 401 && retry) {
       await res.body?.cancel();
       await this.accessToken(true);
-      return this.get<T>(path, false);
+      return this.send<T>(method, path, body, false);
     }
     if (!res.ok) {
-      throw new GmailApiError(
-        res.status,
-        path,
-        await res.text().catch(() => ""),
-      );
+      throw new GmailApiError(res.status, path, await res.text().catch(() => ""));
+    }
+    if (res.status === 204) {
+      await res.body?.cancel();
+      return undefined as T;
     }
     return await res.json() as T;
+  }
+
+  /** Authenticated GET; see {@link request}. */
+  private get<T>(path: string): Promise<T> {
+    return this.request<T>("GET", path);
   }
 
   /** Revoke the grant at Google and delete it from the store. Delete is unconditional. */
