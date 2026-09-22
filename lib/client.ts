@@ -121,6 +121,7 @@ export class GmailClient {
     return await this.send<T>(method, path, body, true);
   }
 
+  /** Transport with one 401 refresh-and-retry; `request()` is the public face. */
   private async send<T>(
     method: string,
     path: string,

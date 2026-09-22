@@ -5,3 +5,4 @@ export * from "./store.ts";
 export * from "./auth.ts";
 export * from "./client.ts";
 export * from "./attachments.ts";
+export * from "./writes.ts";

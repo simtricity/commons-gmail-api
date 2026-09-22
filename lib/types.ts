@@ -213,3 +213,48 @@ export interface Manifest {
    */
   skipped: { messageId: string; filename: string; reason: string }[];
 }
+
+/** Options for creating or updating a label. */
+export interface LabelOptions {
+  /** Show in the label list always, only when unread, or never. */
+  labelListVisibility?: "labelShow" | "labelShowIfUnread" | "labelHide";
+  /** Whether messages carrying the label appear in the message list. */
+  messageListVisibility?: "show" | "hide";
+}
+
+/** A label change applied to messages or threads. Ids, not names. */
+export interface LabelChange {
+  /** Label ids to add. */
+  addLabelIds?: string[];
+  /** Label ids to remove. */
+  removeLabelIds?: string[];
+  /**
+   * Permit `TRASH`, `SPAM` and `INBOX`. Off by default because removing `INBOX` archives and
+   * adding `TRASH` trashes: a labelling run must not do either by accident.
+   */
+  allowSystem?: boolean;
+}
+
+/** Input for a new draft. Plain text only in this release. */
+export interface DraftInput {
+  /** Recipients. Optional when replying: defaults to the original's Reply-To or From. */
+  to?: string[];
+  /** Cc recipients. */
+  cc?: string[];
+  /** Bcc recipients. */
+  bcc?: string[];
+  /** Subject. When replying, defaults to `Re: <original subject>`. */
+  subject?: string;
+  /** Plain-text body, UTF-8. */
+  text: string;
+  /** Reply in the thread of this message: sets threadId, In-Reply-To and References. */
+  replyToMessageId?: string;
+}
+
+/** A Gmail draft as returned by `users.drafts.*`. */
+export interface Draft {
+  /** Draft id. Distinct from the message id. */
+  id: string;
+  /** The draft's message (id, threadId, labelIds). */
+  message: { id: string; threadId?: string; labelIds?: string[] };
+}
