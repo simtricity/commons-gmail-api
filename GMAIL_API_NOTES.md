@@ -45,3 +45,20 @@ Observed while building and testing this client. Vendor behaviour, not ours.
 
 - 250 quota units/user/second. `messages.get` = 5 units, `attachments.get` = 5, `messages.list` = 5,
   `threads.get` = 10. A thread fetch with N files costs ~10 + 5N.
+
+## Writes (labels, drafts) — probed 2026-09-22 under `gmail.modify` + `gmail.compose`
+
+- Creating label `a/b/c` creates **only the leaf**. Parents are not created; the UI shows the leaf
+  nested but `a` and `a/b` cannot be searched or applied. Create prefixes in order yourself.
+- `labels.create` on an existing name → 409 `Label name exists or conflicts`.
+- `messages.modify` returns the message with updated `labelIds`; `messages.batchModify` returns
+  **204 with an empty body** (no per-message result). Max 1000 ids per call.
+- `TRASH` **can** be added via `messages.modify` (it trashes the message); `untrash` restores. So
+  `gmail.modify` reaches trash through the label path — guard system labels in code.
+- `gmail.labels` cannot apply a label to a message; `gmail.modify` is the least privilege that can.
+- `gmail.compose` permits `drafts.create/update/delete` **and** `drafts.send`. Not implementing send
+  is the only thing stopping it.
+- Quota exhaustion arrives as HTTP 403 with reason `rateLimitExceeded`, not 429. Permission failures
+  are also 403 (`insufficientPermissions`); branch on `GmailApiError.reason`. Quota windows are per
+  minute, so backoff under ~8 s cannot outlive one. Metadata reads throttle at ~6/s regardless of
+  concurrency (reported by the gmail-organiser work).
