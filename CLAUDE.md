@@ -58,6 +58,11 @@ email-ingress adapters and supplier-document pipelines). Consumers import from J
   `deno task verify-vendor`. After any `lib/` change, run `deno task vendor` in the skill folder and
   update the version line in `scripts/lib/VENDORED.md`. The skill holds only the read-only
   credential, so the vendored `GmailWriter` fails locally with `InsufficientScopeError`.
+- Since 0.4.0 the skill's Gmail logic (body text, thread search, write guards and log) lives in
+  `lib/`; the skill keeps only arguments, `~/.simt/gmail-api/` paths, agent rules (date bound,
+  `-in:chats`) and output. Keep new Gmail behaviour here, not in the skill. `lib/` must import
+  nothing beyond `globToRegExp`, `join`, `resolve`, `dirname` from `@std/path` (the skill shims
+  exactly those because hosted sandboxes 403 jsr.io).
 - Planned: MGF supplier-paper pipelines, importing from JSR.
 - `skipExisting` (0.2.0) originated as a skill-side workaround; it now lives in `selector()` so the
   double-reporting the skill had to suppress is gone.

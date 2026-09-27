@@ -13,7 +13,9 @@
  *   logout       [--account <email>]              Revoke at Google and forget.
  *   whoami       [--write]                        Runtime, store, grant, mailbox — one line each.
  *   accounts     [--default <email>]              List signed-in mailboxes / set default.
- *   search       -q <gmail query> [--max N]       Message ids + metadata. No bodies.
+ *   search       -q <gmail query> [--max N] [--threads]   Message ids + metadata, or grouped by
+ *                thread with --threads. No bodies.
+ *   read         --thread <id> | --message <id> [--max-chars N]   Headers + body text (default 8000/msg)
  *   attachments list  --thread <id> | --message <id>
  *   attachments fetch --thread <id> | --message <id> --out <dir>
  *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
@@ -60,6 +62,7 @@ const args = parseArgs(Deno.args, {
     "subject",
     "body",
     "reply-to",
+    "max-chars",
   ],
   collect: ["include", "filename", "to", "cc"],
   boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads"],
@@ -82,7 +85,8 @@ Commands:
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
-  search       -q <gmail query> [--max N]       Ids + metadata, no bodies
+  search       -q <gmail query> [--max N] [--threads]   Ids + metadata (grouped by thread with --threads)
+  read         --thread <id> | --message <id> [--max-chars N]   Headers + body text
   attachments list  --thread <id> | --message <id>
   attachments fetch --thread <id> | --message <id> --out <dir>
                [--include <glob>]... [--filename <exact>]... [--inline]
@@ -127,7 +131,7 @@ try {
       break;
     case "search":
       if (!args.q) throw new Error("search needs -q <gmail query>");
-      await commands.search(ctx, {
+      await (args.threads ? commands.searchByThread : commands.search)(ctx, {
         q: args.q,
         max: args.max ? Number(args.max) : 20,
       });
@@ -157,6 +161,11 @@ try {
       }
       break;
     }
+    case "read":
+      await commands.read(ctx, { thread: args.thread, message: args.message }, {
+        maxChars: args["max-chars"] ? Number(args["max-chars"]) : 8000,
+      });
+      break;
     case "labels":
       await commands.labels(ctx);
       break;

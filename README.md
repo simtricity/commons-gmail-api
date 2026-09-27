@@ -40,6 +40,8 @@ const manifest = await fetchThreadAttachments(gmail, "18c9f0a1b2d3e4f5", {
 deno task cli login                      # browser sign-in, gmail.readonly only
 deno task cli whoami
 deno task cli search -q 'from:supplier.example has:attachment newer_than:90d'
+deno task cli search -q 'from:supplier.example newer_than:90d' --threads   # grouped by thread
+deno task cli read --thread 18c9f0a1b2d3e4f5 --max-chars 4000             # bodies as text
 deno task cli attachments list  --thread 18c9f0a1b2d3e4f5
 deno task cli attachments fetch --thread 18c9f0a1b2d3e4f5 --out ./july-invoices --include '*.pdf' --include '*.xlsx'
 deno task cli attachments fetch --thread 18c9f0a1b2d3e4f5 --out ./july-invoices --skip-existing   # re-run: only what's new
@@ -75,6 +77,19 @@ const label = await w.ensureLabel("organiser/2026/review");
 await w.batchModifyMessages(ids, { addLabelIds: [label.id] }); // chunks at 1000, any length
 const draft = await w.createDraft({ replyToMessageId: id, text: "Thanks, received." }); // not sent
 ```
+
+For agents and interactive tools, wrap the writer in `GuardedWriter`, which is what the CLI and
+the `simt:gmail` skill use:
+
+```ts
+const g = new GuardedWriter(w, { maxIds: 25, log: { path: `${home}/.simt/gmail-api/writes.log`, via: "my-tool" } });
+await g.labelChange({ name: "organiser/2026/review", ids, kind: "thread" });              // dry run: returns the plan
+await g.labelChange({ name: "organiser/2026/review", ids, kind: "thread", apply: true }); // writes and logs
+```
+
+Reading as text: `readMessages(gmail, { threadId })` and `bodyText(msg, { maxChars })`; grouped
+search: `searchThreads(gmail, q)`. The library never refuses an unbounded query on its own;
+`requireDateBound(q)` is there for callers that want that rule.
 
 Guardrails, in the library: every write checks the granted scope locally and throws
 `InsufficientScopeError` before any request; `TRASH`, `SPAM` and `INBOX` are refused in any label

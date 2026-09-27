@@ -3,6 +3,37 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.4.0] - 2026-09-27
+
+The library is now the home of all Gmail logic; the `simt:gmail` skill becomes a thin wrapper.
+
+### Added
+
+- **Body text** (`lib/body.ts`): `bodyText(msg, { maxChars })` returns the first non-attachment
+  `text/plain` part, else stripped `text/html`, else the snippet, with `source` and
+  `truncatedChars`. `readMessage` / `readMessages(gmail, { threadId | messageId })` add headers,
+  labels and non-inline attachment names. `stripHtml` exported.
+- **Thread-grouped search** (`lib/search.ts`): `searchThreads(gmail, q, { maxResults, pageToken })`
+  returns per-thread message count, latest date, distinct senders, subject, attachment filenames
+  and message ids, plus `hasMore` / `nextPageToken`. Opt-in `requireDateBound(q)` /
+  `hasDateBound(q)` with `UnboundedQueryError`; the library never applies it itself.
+- **`GuardedWriter`** (`lib/guarded.ts`): one policy layer for interactive and agent writes over
+  `GmailWriter`. Configurable id cap (default 25), system labels refused, plan-then-apply label
+  changes (`labelChange({ …, apply })` is a dry run unless `apply`), idempotent `createLabel`,
+  `createDraft` returning a Gmail link and `sent: false`. Refusals throw `WriteGuardError` with a
+  `code`. Applied writes append one JSON line to a caller-given log path, tagged with the
+  caller's `via` and the mailbox.
+- CLI: `read --thread|--message [--max-chars N]`; `search --threads` for grouped results.
+
+### Changed
+
+- CLI write commands now go through `GuardedWriter`. **`writes.log` line shape standardised**
+  on `{at, via, account, op, label, kind, ids, count}` for label changes (was
+  `messageIds`/`threadIds`, no `via`); the CLI records `via: "gmail-api-cli"`. Earlier lines are
+  left as written.
+- No new dependencies: `lib/` still imports only `globToRegExp`, `join`, `resolve`, `dirname`
+  from `@std/path`.
+
 ## [0.3.0] - 2026-09-22
 
 ### Added — first release that can write to a mailbox (labels and drafts only)

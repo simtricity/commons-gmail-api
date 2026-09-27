@@ -5,16 +5,20 @@
 
 import {
   type ClientSecret,
+  DEFAULT_MAX_IDS,
   fetchMessageAttachments,
   fetchThreadAttachments,
   FileTokenStore,
   GmailClient,
   GmailWriter,
+  GuardedWriter,
   loadClientSecretFile,
   loginInteractive,
   parseGmailId,
+  readMessages,
   SCOPE_READONLY,
   SCOPES_WRITE,
+  searchThreads,
   summarize,
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
@@ -263,27 +267,20 @@ async function exists(path: string): Promise<boolean> {
 
 // ── Writes (labels, drafts) — need --write / credentials.modify.json ────────
 
-/** Per-call ceiling for ids on the CLI. Bulk consumers use the library's batchModifyMessages. */
-export const CLI_MAX_IDS = 25;
+/** Per-call ceiling for ids on the CLI. Bulk consumers use GmailWriter directly. */
+export const CLI_MAX_IDS = DEFAULT_MAX_IDS;
 
-async function writer(ctx: Context): Promise<GmailWriter> {
+async function guarded(ctx: Context): Promise<GuardedWriter> {
   if (!ctx.write) {
     throw new Error(
       "write commands need the write grant: run `login --write` (uses credentials.modify.json)",
     );
   }
-  return new GmailWriter(await client(ctx), { log: (l) => console.error(`  ${l}`) });
-}
-
-/** Append one JSON line per applied mutation next to the credential files. */
-async function logWrite(ctx: Context, entry: Record<string, unknown>): Promise<void> {
-  const path = ctx.credentialsPath.replace(/[^/]+$/, "writes.log");
-  const line = JSON.stringify({
-    at: new Date().toISOString(),
-    account: ctx.account ?? null,
-    ...entry,
+  const writer = new GmailWriter(await client(ctx), { log: (l) => console.error(`  ${l}`) });
+  return new GuardedWriter(writer, {
+    maxIds: CLI_MAX_IDS,
+    log: { path: ctx.credentialsPath.replace(/[^/]+$/, "writes.log"), via: "gmail-api-cli" },
   });
-  await Deno.writeTextFile(path, line + "\n", { append: true, mode: 0o600 });
 }
 
 export async function labels(ctx: Context): Promise<void> {
@@ -297,12 +294,9 @@ export async function labels(ctx: Context): Promise<void> {
 }
 
 export async function labelCreate(ctx: Context, name: string): Promise<void> {
-  const w = await writer(ctx);
-  const existed = await w.findLabel(name);
-  const label = await w.ensureLabel(name);
-  if (!existed) await logWrite(ctx, { op: "label.create", name, id: label.id });
-  out(ctx, { label, created: !existed }, () => {
-    console.log(`${existed ? "exists" : "created"}  ${label.id}  ${label.name}`);
+  const r = await (await guarded(ctx)).createLabel(name);
+  out(ctx, r, () => {
+    console.log(`${r.created ? "created" : "exists"}  ${r.label.id}  ${r.label.name}`);
   });
 }
 
@@ -310,44 +304,24 @@ export async function labelApply(
   ctx: Context,
   opts: { name: string; ids: string[]; remove: boolean; threads: boolean; apply: boolean },
 ): Promise<void> {
-  const w = await writer(ctx);
-  if (!opts.ids.length) throw new Error("--ids <a,b,c> is required");
-  if (opts.ids.length > CLI_MAX_IDS) {
-    throw new Error(`refusing ${opts.ids.length} ids; the CLI caps at ${CLI_MAX_IDS} per call`);
-  }
-  const label = await w.findLabel(opts.name);
-  if (!label) {
-    throw new Error(`no label named ${JSON.stringify(opts.name)}; run \`label create\` first`);
-  }
-  if (label.type === "system") throw new Error(`refusing system label ${label.name}`);
-  const change = opts.remove ? { removeLabelIds: [label.id] } : { addLabelIds: [label.id] };
-  const kind = opts.threads ? "thread" : "message";
-  const plan = {
-    op: opts.remove ? "label.remove" : "label.apply",
-    label: { id: label.id, name: label.name },
-    [`${kind}Ids`]: opts.ids,
-    count: opts.ids.length,
-  };
-  if (!opts.apply) {
-    out(ctx, { dryRun: true, ...plan }, () => {
+  const r = await (await guarded(ctx)).labelChange({
+    name: opts.name,
+    ids: opts.ids,
+    remove: opts.remove,
+    kind: opts.threads ? "thread" : "message",
+    apply: opts.apply,
+  });
+  const verb = opts.remove ? "remove" : "apply";
+  out(ctx, r, () => {
+    if (r.dryRun) {
       console.log(
-        `DRY RUN — would ${
-          opts.remove ? "remove" : "apply"
-        } ${label.name} (${label.id}) on ${opts.ids.length} ${kind}(s). Re-run with --apply.`,
+        `DRY RUN — would ${verb} ${r.label.name} (${r.label.id}) on ${r.count} ${r.kind}(s). Re-run with --apply.`,
       );
-    });
-    return;
-  }
-  if (opts.threads) {
-    for (const id of opts.ids) await w.modifyThread(id, change);
-  } else {
-    await w.batchModifyMessages(opts.ids, change);
-  }
-  await logWrite(ctx, plan);
-  out(ctx, { applied: true, ...plan }, () => {
-    console.log(
-      `${opts.remove ? "removed" : "applied"} ${label.name} on ${opts.ids.length} ${kind}(s)`,
-    );
+    } else {
+      console.log(
+        `${opts.remove ? "removed" : "applied"} ${r.label.name} on ${r.count} ${r.kind}(s)`,
+      );
+    }
   });
 }
 
@@ -355,28 +329,60 @@ export async function draftCreate(
   ctx: Context,
   opts: { to?: string[]; cc?: string[]; subject?: string; text: string; replyTo?: string },
 ): Promise<void> {
-  const w = await writer(ctx);
-  const draft = await w.createDraft({
+  const r = await (await guarded(ctx)).createDraft({
     to: opts.to,
     cc: opts.cc,
     subject: opts.subject,
     text: opts.text,
-    replyToMessageId: opts.replyTo,
+    replyToMessageId: opts.replyTo ? parseGmailId(opts.replyTo) : undefined,
   });
-  const url = `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`;
-  await logWrite(ctx, {
-    op: "draft.create",
-    draftId: draft.id,
-    messageId: draft.message.id,
-    threadId: draft.message.threadId ?? null,
-    replyTo: opts.replyTo ?? null,
-  });
-  out(ctx, { draft, url, sent: false }, () => {
+  out(ctx, r, () => {
+    const d = r.draft;
     console.log(
-      `draft ${draft.id} created (message ${draft.message.id}${
-        draft.message.threadId ? `, thread ${draft.message.threadId}` : ""
+      `draft ${d.id} created (message ${d.message.id}${
+        d.message.threadId ? `, thread ${d.message.threadId}` : ""
       }). Not sent.`,
     );
-    console.log(url);
+    console.log(r.url);
+  });
+}
+
+// ── Reading ─────────────────────────────────────────────────────────────────
+
+export async function read(
+  ctx: Context,
+  t: Target,
+  opts: { maxChars?: number },
+): Promise<void> {
+  const target = resolveTarget(t);
+  const messages = await readMessages(await client(ctx), target, { maxChars: opts.maxChars });
+  out(ctx, { ...target, messages }, () => {
+    for (const m of messages) {
+      console.log(
+        `── ${m.id}  ${m.date}\n   From: ${m.from}\n   To: ${m.to}\n   Subject: ${m.subject}`,
+      );
+      if (m.attachments.length) {
+        console.log(`   📎 ${m.attachments.map((a) => a.filename).join(", ")}`);
+      }
+      console.log(`\n${m.text}\n`);
+      if (m.truncatedChars) console.log("   (raise --max-chars to see the rest)\n");
+    }
+  });
+}
+
+export async function searchByThread(
+  ctx: Context,
+  opts: { q: string; max: number },
+): Promise<void> {
+  const r = await searchThreads(await client(ctx), opts.q, { maxResults: opts.max });
+  out(ctx, r, () => {
+    if (!r.threads.length) console.log(`(no results for: ${r.query})`);
+    for (const t of r.threads) {
+      console.log(
+        `${t.threadId}  ${t.latest}  [${t.messages} msg]\n  ${t.from.join("; ")}\n  ${t.subject}`,
+      );
+      if (t.attachments.length) console.log(`  📎 ${t.attachments.join(", ")}`);
+    }
+    if (r.hasMore) console.log("(more results — narrow the query or raise --max)");
   });
 }
