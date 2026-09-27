@@ -19,7 +19,7 @@ export const DEFAULT_MAX_IDS = 25;
 export interface WriteLogOptions {
   /** File to append JSON lines to (created 0600). */
   path: string;
-  /** Who is writing, e.g. `"gmail-api-cli"` or `"simt:gmail"`. Recorded on every line. */
+  /** Who is writing, e.g. `"gmail-api-cli"` or `"my-agent-skill"`. Recorded on every line. */
   via: string;
 }
 

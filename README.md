@@ -79,7 +79,7 @@ const draft = await w.createDraft({ replyToMessageId: id, text: "Thanks, receive
 ```
 
 For agents and interactive tools, wrap the writer in `GuardedWriter`, which is what the CLI and
-the `simt:gmail` skill use:
+agent skills built on this package use:
 
 ```ts
 const g = new GuardedWriter(w, { maxIds: 25, log: { path: `${home}/.simt/gmail-api/writes.log`, via: "my-tool" } });

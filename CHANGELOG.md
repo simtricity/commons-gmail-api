@@ -5,7 +5,7 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 
 ## [0.4.0] - 2026-09-27
 
-The library is now the home of all Gmail logic; the `simt:gmail` skill becomes a thin wrapper.
+The library is now the home of all Gmail logic, so CLIs and agent skills built on it can be thin wrappers.
 
 ### Added
 
