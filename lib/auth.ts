@@ -11,7 +11,7 @@ import type { ClientSecret, OAuthCredential } from "./types.ts";
 
 /** The only scope this package uses unless a caller explicitly widens it. */
 export const SCOPE_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
-/** Read/write except permanent delete. Needed to apply labels. A deliberate widening; see SPEC-write-support.md. */
+/** Read/write except permanent delete. Needed to apply labels. A deliberate widening, guarded in GmailWriter. */
 export const SCOPE_MODIFY = "https://www.googleapis.com/auth/gmail.modify";
 /** Create and update drafts. Does not allow sending. */
 export const SCOPE_COMPOSE = "https://www.googleapis.com/auth/gmail.compose";

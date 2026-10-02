@@ -63,6 +63,8 @@ deno task cli label create organiser/2026/review          # creates parents too;
 deno task cli label apply organiser/2026/review --ids 18c9…,18ca…          # dry run
 deno task cli label apply organiser/2026/review --ids 18c9…,18ca… --apply  # ≤ 25 ids per call
 deno task cli draft create --reply-to 18c9f0a1b2d3e4f5 --body "Thanks, received."
+deno task cli draft create --reply-to 18c9f0a1b2d3e4f5 --body-file reply.txt \
+  --attach drawing-E-001.pdf --attach drawing-E-002.pdf   # attachments total ≤ 25 MB
 ```
 
 ```ts
@@ -76,6 +78,12 @@ const w = new GmailWriter(gmail);
 const label = await w.ensureLabel("organiser/2026/review");
 await w.batchModifyMessages(ids, { addLabelIds: [label.id] }); // chunks at 1000, any length
 const draft = await w.createDraft({ replyToMessageId: id, text: "Thanks, received." }); // not sent
+await w.createDraft({
+  to: ["someone@example.com"],
+  subject: "Drawings",
+  text: "Both attached.",
+  attachments: [{ filename: "drawing.pdf", content: await Deno.readFile("drawing.pdf") }], // bytes in; type from extension
+});
 ```
 
 For agents and interactive tools, wrap the writer in `GuardedWriter`, which is what the CLI and
@@ -96,8 +104,7 @@ Guardrails, in the library: every write checks the granted scope locally and thr
 change unless `allowSystem: true`; there is no send, trash or delete method. In the CLI: dry run
 unless `--apply`, 25 ids per call, system labels refused outright, and every applied write appends a
 JSON line to `~/.simt/gmail-api/writes.log`. Vendor quirks (parents not auto-created, 409 on
-duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`; the decision record is
-`SPEC-write-support.md`.
+duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`.
 
 ## Setup
 

@@ -3,6 +3,29 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.5.0] - 2026-10-02
+
+Drafts can carry file attachments.
+
+### Added
+
+- **Draft attachments**: `DraftInput.attachments` takes `{ filename, content: Uint8Array,
+  mimeType? }[]`. `buildRawMessage` then emits `multipart/mixed` (text part first, each file a
+  base64 `Content-Disposition: attachment` part); without attachments the message is unchanged
+  single-part `text/plain`. Non-ASCII or quote-bearing filenames are RFC 2231 encoded. The
+  library takes bytes only and never reads paths.
+- `mimeTypeFor(filename)`: MIME type by extension (PDF, images, Office, CSV, DWG/DXF …), else
+  `application/octet-stream`.
+- `MAX_ATTACHMENT_BYTES` (25 MB, Gmail's send limit): `createDraft` refuses a larger total before
+  any network call.
+- CLI: `draft create --attach <path>` (repeatable) and `--body-file <path>` (instead of `--body`).
+
+### Changed
+
+- `GuardedWriter.createDraft` log lines include `attachments: [{ filename, bytes }]` when files
+  are attached. Content is never logged.
+- base64 encoding is chunked, so multi-MB attachments encode quickly.
+
 ## [0.4.0] - 2026-09-27
 
 The library is now the home of all Gmail logic, so CLIs and agent skills built on it can be thin wrappers.

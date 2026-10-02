@@ -185,7 +185,7 @@ export class GuardedWriter {
     return { ...plan, applied: true };
   }
 
-  /** Create a draft and log it. Never sends. */
+  /** Create a draft and log it (attachment filenames and sizes, never content). Never sends. */
   async createDraft(input: DraftInput): Promise<CreateDraftResult> {
     const draft = await this.writer.createDraft(input);
     await this.record({
@@ -193,6 +193,14 @@ export class GuardedWriter {
       draftId: draft.id,
       messageId: draft.message.id,
       threadId: draft.message.threadId ?? null,
+      ...(input.attachments?.length
+        ? {
+          attachments: input.attachments.map((a) => ({
+            filename: a.filename,
+            bytes: a.content.length,
+          })),
+        }
+        : {}),
     });
     return {
       draft,
