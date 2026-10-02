@@ -104,8 +104,7 @@ Guardrails, in the library: every write checks the granted scope locally and thr
 change unless `allowSystem: true`; there is no send, trash or delete method. In the CLI: dry run
 unless `--apply`, 25 ids per call, system labels refused outright, and every applied write appends a
 JSON line to `~/.simt/gmail-api/writes.log`. Vendor quirks (parents not auto-created, 409 on
-duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`; the decision record is
-`SPEC-write-support.md`.
+duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`.
 
 ## Setup
 

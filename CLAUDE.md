@@ -33,10 +33,17 @@ policy, expressed as a custom `TokenStore` on top of this client.
 Internal Simtricity tooling (a personal Claude skill for attachment retrieval; planned:
 email-ingress adapters and supplier-document pipelines). Consumers import from JSR.
 
+## Specs
+
+Specs are **not kept in this repo** and never committed. They live in the workspace
+`../_specs/` (`backlog/` → `current/` → `delivered/` | `shelved/`) as
+`SPEC-GMAIL-API-<SLUG>-YYYY-MM-DD.md`; see the workspace `CLAUDE.md`. Open: scheduled send
+(`../_specs/backlog/SPEC-GMAIL-API-SCHEDULED-SEND-2026-10-02.md`).
+
 ## Rules
 
 - Read-only stays the default. Writes exist only on `GmailWriter` (`lib/writes.ts`): labels and
-  drafts, decided in `SPEC-write-support.md` (2026-09-22). No send, trash or delete; adding any of
+  drafts, decided in the workspace spec `../_specs/delivered/SPEC-GMAIL-API-WRITE-SUPPORT-2026-09-22.md` (2026-09-22). No send, trash or delete; adding any of
   those is a new decision and a new spec. The write grant lives in `credentials.modify.json`, never
   in `credentials.json`.
 - Never log or echo the client secret, refresh token, or attachment ids in error text.
