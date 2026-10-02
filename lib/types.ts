@@ -249,6 +249,18 @@ export interface DraftInput {
   text: string;
   /** Reply in the thread of this message: sets threadId, In-Reply-To and References. */
   replyToMessageId?: string;
+  /** Files to attach, as bytes. The library never reads paths; callers load the files. */
+  attachments?: DraftAttachment[];
+}
+
+/** A file attached to a draft. */
+export interface DraftAttachment {
+  /** Filename shown to the recipient. */
+  filename: string;
+  /** File bytes. */
+  content: Uint8Array;
+  /** MIME type. Default: guessed from the filename's extension. */
+  mimeType?: string;
 }
 
 /** A Gmail draft as returned by `users.drafts.*`. */

@@ -22,6 +22,7 @@ import {
   summarize,
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
+import { basename } from "@std/path";
 
 export interface Context {
   account?: string;
@@ -327,9 +328,24 @@ export async function labelApply(
 
 export async function draftCreate(
   ctx: Context,
-  opts: { to?: string[]; cc?: string[]; subject?: string; text: string; replyTo?: string },
+  opts: {
+    to?: string[];
+    cc?: string[];
+    subject?: string;
+    text: string;
+    replyTo?: string;
+    attach?: string[];
+  },
 ): Promise<void> {
+  // Files are read here, not in lib/: the library takes bytes and never touches paths.
+  const attachments = await Promise.all(
+    (opts.attach ?? []).map(async (p) => ({
+      filename: basename(p),
+      content: await Deno.readFile(p),
+    })),
+  );
   const r = await (await guarded(ctx)).createDraft({
+    attachments: attachments.length ? attachments : undefined,
     to: opts.to,
     cc: opts.cc,
     subject: opts.subject,
@@ -343,6 +359,7 @@ export async function draftCreate(
         d.message.threadId ? `, thread ${d.message.threadId}` : ""
       }). Not sent.`,
     );
+    for (const a of attachments) console.log(`   📎 ${a.filename} (${a.content.length} bytes)`);
     console.log(r.url);
   });
 }

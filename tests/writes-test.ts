@@ -6,7 +6,9 @@ import {
   GmailClient,
   GmailWriter,
   InsufficientScopeError,
+  MAX_ATTACHMENT_BYTES,
   MemoryTokenStore,
+  mimeTypeFor,
   SCOPE_COMPOSE,
   SCOPE_MODIFY,
   SCOPE_READONLY,
@@ -176,4 +178,116 @@ Deno.test("buildRawMessage is deterministic and RFC 2047 encodes a non-ASCII sub
     ),
   );
   assert(plain.includes("Subject: Plain\r\n"));
+});
+
+const unb64url = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+/** Split a decoded multipart/mixed message into its header block and parts. */
+function parts(raw: string): { head: string; parts: { head: string; body: string }[] } {
+  const boundary = raw.match(/boundary="([^"]+)"/)![1];
+  const [head, ...rest] = raw.split(`\r\n--${boundary}`);
+  const parts = rest.filter((p) => !p.startsWith("--")).map((p) => {
+    const [h, b] = p.replace(/^\r\n/, "").split("\r\n\r\n");
+    return { head: h, body: b.replace(/\r\n/g, "") };
+  });
+  return { head, parts };
+}
+
+Deno.test("buildRawMessage with attachments: multipart/mixed, bytes round-trip, types", () => {
+  const pdf = new Uint8Array(100_000).map((_, i) => (i * 31) % 256);
+  const raw = unb64url(buildRawMessage({
+    to: ["a@b.test"],
+    subject: "Drawings",
+    text: "See attached — thanks.",
+    attachments: [
+      { filename: "drawing-E-002.pdf", content: pdf },
+      {
+        filename: "notes.bin",
+        content: new Uint8Array([0, 255]),
+        mimeType: "application/x-custom",
+      },
+      { filename: "data", content: new Uint8Array([1]) },
+    ],
+  }));
+  const m = parts(raw);
+  assert(m.head.includes('Content-Type: multipart/mixed; boundary="=_gmail-api_mixed_0"'));
+  assert(raw.trimEnd().endsWith("--=_gmail-api_mixed_0--"));
+  assertEquals(m.parts.length, 4);
+  assert(m.parts[0].head.includes("text/plain; charset=UTF-8"));
+  assertEquals(new TextDecoder().decode(unb64(m.parts[0].body)), "See attached — thanks.");
+  assert(m.parts[1].head.includes('Content-Type: application/pdf; name="drawing-E-002.pdf"'));
+  assert(m.parts[1].head.includes('Content-Disposition: attachment; filename="drawing-E-002.pdf"'));
+  assertEquals(unb64(m.parts[1].body), pdf);
+  assert(m.parts[2].head.includes("Content-Type: application/x-custom;"));
+  assert(m.parts[3].head.includes("Content-Type: application/octet-stream;"));
+  // Without attachments the message stays single-part text/plain.
+  const plain = unb64url(buildRawMessage({ to: ["a@b.test"], subject: "x", text: "y" }));
+  assert(plain.includes("Content-Type: text/plain; charset=UTF-8\r\n"));
+  assert(!plain.includes("multipart"));
+});
+
+Deno.test("buildRawMessage RFC 2231 encodes non-ASCII and quote-bearing filenames", () => {
+  const raw = unb64url(buildRawMessage({
+    to: ["a@b.test"],
+    subject: "x",
+    text: "y",
+    attachments: [
+      { filename: "Schéma.pdf", content: new Uint8Array([1]) },
+      { filename: 'a"b.txt', content: new Uint8Array([1]) },
+    ],
+  }));
+  assert(raw.includes("filename*=UTF-8''Sch%C3%A9ma.pdf"));
+  assert(raw.includes("name*=UTF-8''Sch%C3%A9ma.pdf"));
+  assert(raw.includes("filename*=UTF-8''a%22b.txt"));
+});
+
+Deno.test("mimeTypeFor maps common extensions, case-insensitive, else octet-stream", () => {
+  assertEquals(mimeTypeFor("X.PDF"), "application/pdf");
+  assertEquals(
+    mimeTypeFor("model.xlsx"),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  assertEquals(mimeTypeFor("noext"), "application/octet-stream");
+  assertEquals(mimeTypeFor("weird.qqq"), "application/octet-stream");
+});
+
+Deno.test("createDraft refuses attachments over 25 MB before any network call", async () => {
+  const { writer, calls } = fakeGmail(WRITE, () => undefined);
+  await assertRejects(
+    () =>
+      writer.createDraft({
+        to: ["a@b.test"],
+        text: "t",
+        attachments: [{ filename: "big.bin", content: new Uint8Array(MAX_ATTACHMENT_BYTES + 1) }],
+      }),
+    Error,
+    "Gmail's limit",
+  );
+  assertEquals(calls.filter((c) => c.path === "/drafts").length, 0);
+});
+
+Deno.test("createDraft sends attachments in the raw message, threaded when replying", async () => {
+  const { writer, calls } = fakeGmail(WRITE, (c) => {
+    if (c.path.startsWith("/messages/orig")) {
+      return json({
+        id: "orig",
+        threadId: "t1",
+        payload: {
+          headers: [{ name: "From", value: "s@example.test" }, { name: "Subject", value: "Q" }],
+        },
+      });
+    }
+    if (c.path === "/drafts") return json({ id: "d1", message: { id: "m9", threadId: "t1" } });
+  });
+  await writer.createDraft({
+    replyToMessageId: "orig",
+    text: "attached",
+    attachments: [{ filename: "a.pdf", content: new Uint8Array([37, 80, 68, 70]) }],
+  });
+  const body = calls.at(-1)!.body as { message: { raw: string; threadId: string } };
+  assertEquals(body.message.threadId, "t1");
+  const raw = unb64url(body.message.raw);
+  assert(raw.includes('filename="a.pdf"'));
+  assert(raw.includes("JVBERg==")); // "%PDF"
 });

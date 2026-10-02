@@ -142,7 +142,54 @@ export interface RawMessageInput {
   inReplyTo?: string;
   /** References chain, oldest first. */
   references?: string[];
+  /** Files to attach. With any, the message becomes `multipart/mixed`. */
+  attachments?: RawAttachment[];
 }
+
+/** One file attached by {@link buildRawMessage}. */
+export interface RawAttachment {
+  /** Filename shown to the recipient; non-ASCII is RFC 2231 encoded. */
+  filename: string;
+  /** File bytes. */
+  content: Uint8Array;
+  /** MIME type. Default: guessed from the extension by {@link mimeTypeFor}. */
+  mimeType?: string;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  html: "text/html",
+  json: "application/json",
+  xml: "application/xml",
+  zip: "application/zip",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  dwg: "image/vnd.dwg",
+  dxf: "image/vnd.dxf",
+};
+
+/** MIME type for a filename by extension; `application/octet-stream` when unknown. */
+export function mimeTypeFor(filename: string): string {
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  return (ext && MIME_BY_EXT[ext]) ?? "application/octet-stream";
+}
+
+// Starts with "=_", which base64 lines never contain, so it cannot collide with a part body.
+const BOUNDARY = "=_gmail-api_mixed_0";
 
 function encodeHeaderWord(value: string): string {
   if (/^[\x20-\x7e]*$/.test(value)) return value;
@@ -151,7 +198,10 @@ function encodeHeaderWord(value: string): string {
 
 function encodeBase64(bytes: Uint8Array): string {
   let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
+  // Chunked: one fromCharCode per 32 KiB keeps multi-MB attachments fast and under arg limits.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
   return btoa(bin);
 }
 
@@ -160,10 +210,31 @@ export function toBase64Url(b64: string): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** `filename` parameter: plain quoted when ASCII-safe, else RFC 2231 `filename*=UTF-8''…`. */
+function filenameParam(name: string): string {
+  if (/^[\x20-\x7e]*$/.test(name) && !/["\\]/.test(name)) return `filename="${name}"`;
+  const pct = Array.from(
+    new TextEncoder().encode(name),
+    (b) =>
+      /[A-Za-z0-9!#$&+\-.^_`|~]/.test(String.fromCharCode(b))
+        ? String.fromCharCode(b)
+        : `%${b.toString(16).toUpperCase().padStart(2, "0")}`,
+  ).join("");
+  return `filename*=UTF-8''${pct}`;
+}
+
+/** Push `bytes` as base64 in 76-char lines. */
+function pushBase64(lines: string[], bytes: Uint8Array): void {
+  const b64 = encodeBase64(bytes);
+  for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
+}
+
 /**
- * Build a plain-text RFC 5322 message and return it base64url-encoded, ready for
+ * Build an RFC 5322 message and return it base64url-encoded, ready for
  * `users.drafts.create` `message.raw`. Deterministic: no Date or Message-ID header, Gmail adds
- * them. The body is base64 transfer-encoded so any UTF-8 text is safe.
+ * them. The body is base64 transfer-encoded so any UTF-8 text is safe. With `attachments` the
+ * message is `multipart/mixed`: the text part first, then each file as a base64
+ * `Content-Disposition: attachment` part.
  */
 export function buildRawMessage(input: RawMessageInput): string {
   const lines: string[] = [];
@@ -174,10 +245,31 @@ export function buildRawMessage(input: RawMessageInput): string {
   if (input.inReplyTo) lines.push(`In-Reply-To: ${input.inReplyTo}`);
   if (input.references?.length) lines.push(`References: ${input.references.join(" ")}`);
   lines.push("MIME-Version: 1.0");
-  lines.push("Content-Type: text/plain; charset=UTF-8");
-  lines.push("Content-Transfer-Encoding: base64");
-  lines.push("");
-  const body = encodeBase64(new TextEncoder().encode(input.text));
-  for (let i = 0; i < body.length; i += 76) lines.push(body.slice(i, i + 76));
+  const text = new TextEncoder().encode(input.text);
+  if (!input.attachments?.length) {
+    lines.push("Content-Type: text/plain; charset=UTF-8");
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push("");
+    pushBase64(lines, text);
+  } else {
+    lines.push(`Content-Type: multipart/mixed; boundary="${BOUNDARY}"`);
+    lines.push("");
+    lines.push(`--${BOUNDARY}`);
+    lines.push("Content-Type: text/plain; charset=UTF-8");
+    lines.push("Content-Transfer-Encoding: base64");
+    lines.push("");
+    pushBase64(lines, text);
+    for (const a of input.attachments) {
+      const type = (a.mimeType ?? mimeTypeFor(a.filename)).replace(/[\r\n]/g, "");
+      const param = filenameParam(a.filename.replace(/[\r\n]/g, " "));
+      lines.push(`--${BOUNDARY}`);
+      lines.push(`Content-Type: ${type}; ${param.replace(/^filename/, "name")}`);
+      lines.push(`Content-Disposition: attachment; ${param}`);
+      lines.push("Content-Transfer-Encoding: base64");
+      lines.push("");
+      pushBase64(lines, a.content);
+    }
+    lines.push(`--${BOUNDARY}--`);
+  }
   return toBase64Url(encodeBase64(new TextEncoder().encode(lines.join("\r\n") + "\r\n")));
 }

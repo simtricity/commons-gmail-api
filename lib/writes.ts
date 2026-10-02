@@ -27,6 +27,9 @@ import type {
 /** Labels a `LabelChange` refuses without `allowSystem`, because touching them archives or trashes. */
 export const GUARDED_SYSTEM_LABELS: readonly string[] = ["TRASH", "SPAM", "INBOX"];
 
+/** Total attachment bytes `createDraft` accepts: Gmail's 25 MB limit on what can be sent. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 /** Gmail's per-call ceiling for `messages.batchModify`. */
 export const BATCH_MODIFY_MAX = 1000;
 
@@ -186,7 +189,8 @@ export class GmailWriter {
   // ── Drafts ─────────────────────────────────────────────────────────────────
 
   /**
-   * Create a plain-text draft. With `replyToMessageId` the draft lands in that thread with
+   * Create a plain-text draft, optionally with file attachments (total at most
+   * {@link MAX_ATTACHMENT_BYTES}, checked before any network call). With `replyToMessageId` the draft lands in that thread with
    * In-Reply-To/References set and, unless given, `to` from the original's Reply-To or From and
    * subject `Re: …`. Nothing is sent; there is no send method in this package.
    */
@@ -214,6 +218,12 @@ export class GmailWriter {
       }
     }
     if (!to.length) throw new Error("createDraft: no recipients (pass `to` or a replyToMessageId)");
+    const attachBytes = (input.attachments ?? []).reduce((n, a) => n + a.content.length, 0);
+    if (attachBytes > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `createDraft: attachments total ${attachBytes} bytes; Gmail's limit is ${MAX_ATTACHMENT_BYTES}`,
+      );
+    }
     const raw = buildRawMessage({
       to,
       cc: input.cc,
@@ -222,6 +232,7 @@ export class GmailWriter {
       text: input.text,
       inReplyTo,
       references,
+      attachments: input.attachments,
     });
     const message: { raw: string; threadId?: string } = { raw };
     if (threadId) message.threadId = threadId;

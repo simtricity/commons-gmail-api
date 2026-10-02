@@ -304,3 +304,15 @@ Deno.test("guard: createDraft returns a link, sent:false, and logs draft ids", a
     "test-suite",
   ]);
 });
+
+Deno.test("guard: createDraft logs attachment filenames and sizes, never content", async () => {
+  const { g, lines } = await guardedFake();
+  await g.createDraft({
+    to: ["a@example.test"],
+    subject: "s",
+    text: "t",
+    attachments: [{ filename: "a.pdf", content: new Uint8Array(10) }],
+  });
+  const [l] = await lines();
+  assertEquals(l.attachments, [{ filename: "a.pdf", bytes: 10 }]);
+});

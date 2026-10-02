@@ -58,6 +58,11 @@ Observed while building and testing this client. Vendor behaviour, not ours.
 - `gmail.labels` cannot apply a label to a message; `gmail.modify` is the least privilege that can.
 - `gmail.compose` permits `drafts.create/update/delete` **and** `drafts.send`. Not implementing send
   is the only thing stopping it.
+- Drafts with attachments (probed 2026-10-02): the plain JSON `POST /drafts` with `message.raw`
+  accepted 5, 10 and 20 MB random-byte attachments (~5 s, ~9 s, ~16 s), so the
+  `/upload/…?uploadType=multipart` endpoint is not needed under the 25 MB send limit. Gmail
+  parses RFC 2231 `filename*=UTF-8''…` back into the plain filename, and `attachments.get` on
+  the draft's message returns the exact bytes sent.
 - Quota exhaustion arrives as HTTP 403 with reason `rateLimitExceeded`, not 429. Permission failures
   are also 403 (`insufficientPermissions`); branch on `GmailApiError.reason`. Quota windows are per
   minute, so backoff under ~8 s cannot outlive one. Metadata reads throttle at ~6/s regardless of

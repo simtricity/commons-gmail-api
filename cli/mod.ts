@@ -27,6 +27,7 @@
  *   label apply  <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply; max 25 ids
  *   label remove <name> --ids a,b,c [--threads] [--apply]   System labels refused
  *   draft create --to a@b --subject S --body TEXT | --reply-to <messageId> --body TEXT
+ *                [--body-file <path>] [--attach <path>]...   (attachments total ≤ 25 MB)
  *                Creates a draft only. Applied writes append to ~/.simt/gmail-api/writes.log
  *
  * Global options:
@@ -63,8 +64,9 @@ const args = parseArgs(Deno.args, {
     "body",
     "reply-to",
     "max-chars",
+    "body-file",
   ],
-  collect: ["include", "filename", "to", "cc"],
+  collect: ["include", "filename", "to", "cc", "attach"],
   boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads"],
   alias: { h: "help" },
 });
@@ -82,6 +84,7 @@ Commands:
   label create <name>                           Create label (parents too); idempotent   [write]
   label apply|remove <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply   [write]
   draft create --to <a> --subject <s> --body <t> | --reply-to <msgId> --body <t>        [write]
+               [--body-file <path>] (instead of --body) [--attach <path>]... (total ≤ 25 MB)
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
@@ -189,13 +192,17 @@ try {
     }
     case "draft":
       if (sub !== "create") throw new Error("draft needs a subcommand: create");
-      if (!args.body) throw new Error("draft create needs --body <text>");
+      if (!args.body && !args["body-file"]) {
+        throw new Error("draft create needs --body <text> or --body-file <path>");
+      }
+      if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
       await commands.draftCreate(ctx, {
         to: (args.to as string[] | undefined)?.map(String),
         cc: (args.cc as string[] | undefined)?.map(String),
         subject: args.subject,
-        text: args.body,
+        text: args.body ?? await Deno.readTextFile(args["body-file"]!),
         replyTo: args["reply-to"],
+        attach: (args.attach as string[] | undefined)?.map(String),
       });
       break;
     default:
