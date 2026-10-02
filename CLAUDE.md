@@ -60,7 +60,7 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
 
 ## Consumers and vendoring
 
-- The `simt:gmail` skill (`~/code/anthropic/cc-marketplace/plugins/simt/skills/gmail`) **vendors `lib/`** into
+- The `simt:gmail` skill (`~/.simt-marketplace/plugins/simt/skills/gmail`) **vendors `lib/`** into
   `scripts/lib/` (hosted sandboxes return 403 for jsr.io, so this is permanent) and checks drift with
   `deno task verify-vendor`. After any `lib/` change, run `deno task vendor` in the skill folder and
   update the version line in `scripts/lib/VENDORED.md`. The skill holds only the read-only
