@@ -3,6 +3,32 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.6.0] - 2026-10-04
+
+Reading a message now shows where it really came from and where its links go, so checking a
+suspected phishing email needs no custom code.
+
+### Added
+
+- **Authentication summary** (`lib/headers.ts`): `authSummary(msg)` reports DKIM (result, signing
+  domain, selector), SPF (result, envelope sender) and DMARC (result, published policy) from the
+  **topmost** `Authentication-Results` written by `mx.google.com`, ignoring any lower copy a sender
+  could have forged. `flags` are warnings (`dkim-fail`, `dkim-not-aligned`, `spf-fail`,
+  `dmarc-fail`, `dmarc-none`, `reply-to-other-domain`, `no-authentication-results`); `notes` are
+  context that is normal on its own (`return-path-other-domain`, `dmarc-policy-none`).
+- `parseAuthenticationResults(value)` (RFC 8601, also takes the ARC form), `allHeaders(msg)`,
+  `provenanceHeaders(msg)`, `addressDomain()`, and `orgDomain()` (approximate organisational
+  domain without a Public Suffix List).
+- **Links** (`lib/links.ts`): `messageLinks(msg)` returns every `href` from the HTML part, taken
+  before tags are stripped (bare URLs from plain text when there is no HTML), a host → count
+  summary, and `mismatch` where the visible text names a different organisation from the
+  target. `extractHtmlLinks()` and `extractTextLinks()` are exported.
+- `readMessage` / `readMessages` always include `auth`; `{ headers: true }` adds every header and
+  `{ links: true }` adds the links.
+- `rawMessage(gmail, id)`: the message exactly as received (RFC 5322 bytes).
+- CLI: `read` prints a one-line DKIM/SPF/DMARC summary with flags; `read --headers` and
+  `read --links`; `raw --message <id> --out <dir>` saves `<id>.eml` (mode 0600) with its sha256.
+
 ## [0.5.0] - 2026-10-02
 
 Drafts can carry file attachments.

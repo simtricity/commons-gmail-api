@@ -51,6 +51,27 @@ deno task cli logout                     # revokes at Google, then deletes local
 Add `--json` to any command for machine-readable output. `--account <email>` picks a mailbox when
 more than one is signed in.
 
+## Is this email genuine? (0.6.0)
+
+```bash
+deno task cli read --message 18c9f0a1b2d3e4f5 --links            # auth line + every link
+deno task cli read --message 18c9f0a1b2d3e4f5 --headers --json   # all headers, auth, as JSON
+deno task cli raw  --message 18c9f0a1b2d3e4f5 --out ./evidence   # the .eml exactly as received
+```
+
+```ts
+import { authSummary, messageLinks } from "@simtricity-commons/gmail-api";
+
+const msg = await gmail.getMessage(id, "full");
+const auth = authSummary(msg); // { dkim, spf, dmarc, flags: [...warnings], notes: [...context] }
+const { hosts, mismatches } = messageLinks(msg); // where the links really go
+```
+
+`auth` comes from the topmost `Authentication-Results` added by Gmail's receiving server, so a
+sender cannot fake it with a header of their own. Empty `flags` means DKIM aligned with `From`,
+DMARC passed and Reply-To stays on the sender's domain. It does not prove the sender is honest,
+only that the mail is really from the domain it claims.
+
 ## Writes: labels and drafts (0.3.0, opt-in)
 
 Writing needs a second grant and a separate import. The read-only credential is never widened.

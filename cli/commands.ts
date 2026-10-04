@@ -15,14 +15,17 @@ import {
   loadClientSecretFile,
   loginInteractive,
   parseGmailId,
+  rawMessage,
   readMessages,
   SCOPE_READONLY,
   SCOPES_WRITE,
   searchThreads,
+  sha256Hex,
   summarize,
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
-import { basename } from "@std/path";
+import type { ReadMessage } from "../lib/body.ts";
+import { basename, join } from "@std/path";
 
 export interface Context {
   account?: string;
@@ -369,22 +372,66 @@ export async function draftCreate(
 export async function read(
   ctx: Context,
   t: Target,
-  opts: { maxChars?: number },
+  opts: { maxChars?: number; headers?: boolean; links?: boolean },
 ): Promise<void> {
   const target = resolveTarget(t);
-  const messages = await readMessages(await client(ctx), target, { maxChars: opts.maxChars });
+  const messages = await readMessages(await client(ctx), target, opts);
   out(ctx, { ...target, messages }, () => {
     for (const m of messages) {
       console.log(
         `── ${m.id}  ${m.date}\n   From: ${m.from}\n   To: ${m.to}\n   Subject: ${m.subject}`,
       );
+      console.log(`   Auth: ${authLine(m.auth)}`);
       if (m.attachments.length) {
         console.log(`   📎 ${m.attachments.map((a) => a.filename).join(", ")}`);
+      }
+      if (m.headers) {
+        console.log("\n   Headers:");
+        for (const h of m.headers) console.log(`     ${h.name}: ${h.value}`);
+      }
+      if (m.links) {
+        const l = m.links;
+        console.log(
+          `\n   Links: ${l.links.length}, hosts: ${
+            l.hosts.map((h) => `${h.host}×${h.count}`).join(", ") || "none"
+          }${l.mismatches ? `, ⚠ ${l.mismatches} text/target mismatch(es)` : ""}`,
+        );
+        for (const k of l.links) {
+          const warn = k.mismatch ? `  ⚠ text names ${k.textHost}` : "";
+          console.log(`     ${k.href}${k.text ? `  "${k.text.slice(0, 60)}"` : ""}${warn}`);
+        }
       }
       console.log(`\n${m.text}\n`);
       if (m.truncatedChars) console.log("   (raise --max-chars to see the rest)\n");
     }
   });
+}
+
+/** One line: `dkim=pass d=x.com · spf=pass · dmarc=pass p=none · ⚠ flags`. */
+function authLine(a: ReadMessage["auth"]): string {
+  if (!a.authservId) return "⚠ no Authentication-Results";
+  const dkim = a.dkim.length
+    ? a.dkim.map((d) =>
+      `dkim=${d.result}${d.domain ? ` d=${d.domain}` : ""}${d.selector ? ` s=${d.selector}` : ""}`
+    ).join(", ")
+    : "dkim=none";
+  const spf = a.spf ? `spf=${a.spf.result}` : "spf=none";
+  const dmarc = a.dmarc
+    ? `dmarc=${a.dmarc.result}${a.dmarc.policy ? ` p=${a.dmarc.policy}` : ""}`
+    : "dmarc=none";
+  const flags = a.flags.length ? `  ⚠ ${a.flags.join(", ")}` : "";
+  const notes = a.notes.length ? `  ℹ ${a.notes.join(", ")}` : "";
+  return `${dkim} · ${spf} · ${dmarc} (${a.authservId})${flags}${notes}`;
+}
+
+export async function raw(ctx: Context, opts: { message: string; outDir: string }): Promise<void> {
+  const id = parseGmailId(opts.message);
+  const bytes = await rawMessage(await client(ctx), id);
+  await Deno.mkdir(opts.outDir, { recursive: true });
+  const path = join(opts.outDir, `${id}.eml`);
+  await Deno.writeFile(path, bytes, { mode: 0o600 });
+  const r = { messageId: id, path, bytes: bytes.length, sha256: await sha256Hex(bytes) };
+  out(ctx, r, () => console.log(`wrote ${r.path}  ${r.bytes} B  ${r.sha256.slice(0, 12)}…`));
 }
 
 export async function searchByThread(
