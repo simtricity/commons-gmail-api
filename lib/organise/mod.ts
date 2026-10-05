@@ -13,6 +13,7 @@ export * from "./message.ts";
 export * from "./policy.ts";
 export * from "./relationships.ts";
 export * from "./sample.ts";
+export * from "./scheme.ts";
 export * from "./throttle.ts";
 export * from "./types.ts";
 export * from "./verdict.ts";
