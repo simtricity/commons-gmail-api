@@ -283,7 +283,7 @@ const jsonLines = async (path: string) =>
 
 const ours = (names: string[], prefix: string) => names.filter((n) => n.startsWith(prefix));
 
-Deno.test("apply and reconcile: dry run first, changed messages only, every group logged (R2)", async () => {
+Deno.test("apply and reconcile: dry run first, changed messages only, every group logged", async () => {
   const { w } = await judged();
   const guardLog = `${w.dir}/../${w.dir.split("/").at(-1)}-guard.log`;
   w.io.writer = new GuardedWriter(new GmailWriter(w.mailbox.client(WRITE)), {
@@ -393,7 +393,7 @@ class RefusingWriter extends GmailWriter {
   }
 }
 
-Deno.test("apply: a group refused part way logs what landed, then rethrows (R2, R-c)", async () => {
+Deno.test("apply: a group refused part way logs what landed, then rethrows", async () => {
   const ids = Array.from({ length: 1500 }, (_, i) => `m${String(i).padStart(4, "0")}`);
   const date = String(Date.UTC(2020, 5, 1));
   const w = await setup({
