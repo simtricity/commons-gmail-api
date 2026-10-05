@@ -50,6 +50,31 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 - `SystemOneJudge` behind a `Judge` interface: a client for TypeSafe's System One endpoint with an
   injected key and `fetch`, its own retries for 429, 5xx and network failures, and
   `SystemOneError` (status, body, reason) whose message never carries the key or the body.
+- **`Organiser`**: the whole pipeline over one data directory, `capture → corpus → sample →
+  fetch → judge → decide → score → apply → reconcile`, plus `explain`, `find`, `rule` and
+  `runs`. Gmail, the decision model, the writer and the clock are injected; it reads and writes
+  only under the directory it is given, never the environment or a default path. Files are
+  written whole, 0600, in 0700 directories.
+  - `capture` keeps sent or received metadata in yearly shards, incrementally; `sample` draws a
+    deterministic sample that never includes a thread you replied into; `fetch` reads it paced
+    to Gmail's per-user quota, rejects single-message threads that have since grown without
+    reading them, and resumes.
+  - `judge` asks only what is unanswered or was asked under different wording, and records
+    every pass and its token use; `decide`, `score`, `explain` and `find` work from stored
+    files alone.
+  - `apply` is a dry run unless `apply: true`, changes only messages whose labels differ from
+    their decision, and keeps every applied change, ids included, in
+    `runs/<run>/apply.<scheme>.log` with the same `idsSha256` the guard logs. A change refused
+    part-way is logged with the chunks that landed before the error is rethrown.
+  - `reconcile` compares the labels in Gmail with the decisions; `rule` records a golden case
+    and optionally a sender ruling, validated before either file is written.
+- **CLI `organise <verb>`** for every stage and `whoami`, with `--json` on every verb and exit
+  codes for scripts: 0 done, 1 usage or unexpected, 2 a missing grant or model key, 3 a critical
+  `score` failure, 4 a `reconcile` mismatch, 5 a stage that finished with failures. The data
+  directory defaults to `~/.simt/gmail-api/organise` (`GMAIL_ORGANISE_DATA`); the model key is
+  `TYPESAFE_API_KEY`. The CLI is not published.
+- README "Organising a mailbox", `examples/organise/profile.json` and
+  `examples/organise-triage.ts`.
 
 ### Changed
 
@@ -63,6 +88,9 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 - `WriteGuardError.code` adds `"bad-scope"` and `"outside-scope"`. A consumer that switches
   exhaustively over the codes will need the two new cases.
 - `labelChange` and its 25-id cap are unchanged.
+- `GMAIL_API_NOTES.md`: `label:` in a search takes the label's name with `/` and spaces written
+  as `-`, not its id as the notes said. New notes on the per-minute unit quota, counting thread
+  sizes by listing, sender and mailing-list quirks, and Noul versus Choice answers.
 
 ## [0.6.0] - 2026-10-04
 
