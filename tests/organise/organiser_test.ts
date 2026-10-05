@@ -222,3 +222,47 @@ Deno.test("judge: without a model it refuses before reading anything", async () 
   await assertRejects(() => org.judge({ run: "r" }), TypeError, "io.judge");
   await w.done();
 });
+
+Deno.test("decide, score, explain, find, runs: local and repeatable", async () => {
+  const { w, org } = await judged();
+  await org.corpus();
+  await org.judge({ run: "r" });
+  const out = await org.decide({ run: "r", now: NOW });
+  assertEquals(Object.keys(out), ["triage", "project"]);
+  assertEquals(out.triage.counts, { delete: 5, defer: 1, keep: 1, important: 2 });
+  assertEquals(out.triage.routes.perishable, { delete: 1 }, "r10 without a ruling");
+  assertEquals(out.project.counts, { alpha: 1, beta: 1, none: 7 });
+  assertEquals(out.triage.routes.campaign, { delete: 1 });
+  const again = await org.decide({ run: "r", now: NOW, schemes: ["triage"] });
+  assertEquals(again.triage.moves, {}, "an unchanged re-decide moves nothing");
+  await org.decide({ run: "r", now: Date.UTC(2040, 0, 1), schemes: ["triage"] });
+  const file = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/r/decisions.triage.json`));
+  assertEquals(file.now, "2040-01-01T00:00:00.000Z");
+
+  const e = await org.explain({ run: "r", id: "r2", scheme: "triage" });
+  assertEquals([e.facts.sender, e.facts.strength, e.facts.protection], [
+    "alice@partner.test",
+    "strong",
+    "address",
+  ]);
+  assertEquals(Object.keys(e.asked).length, 9);
+  await assertRejects(
+    () => org.explain({ run: "r", id: "nope", scheme: "triage" }),
+    Error,
+    "not decided",
+  );
+  await assertRejects(() => org.score({ run: "r", scheme: "nosuch" }), ProfileError);
+
+  assertEquals((await org.find({ run: "r", text: "INVOICE" })).map((m) => m.id), ["r3"]);
+  assertEquals((await org.runs()).map((m) => m.id), ["r"]);
+  await w.done();
+});
+
+Deno.test("decide without a corpus still decides, treating nobody as known", async () => {
+  const { w, org } = await judged();
+  await org.judge({ run: "r" });
+  const out = await org.decide({ run: "r", now: NOW, schemes: ["triage"] });
+  assert(out.triage.counts.delete >= 1);
+  assert(w.lines.some((l) => l.includes("no corpus")));
+  await w.done();
+});

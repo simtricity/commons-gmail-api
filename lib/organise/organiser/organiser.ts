@@ -4,17 +4,21 @@
  * @module
  */
 
-import { type GoldenCase, parseGolden } from "../golden.ts";
+import { type GoldenCase, parseGolden, type ScoreResult } from "../golden.ts";
+import type { OrganiseMessage } from "../message.ts";
 import { parseProfile, type Profile } from "../profile.ts";
 import { ProfileError, type SenderRulings } from "../scheme.ts";
 import { capture, corpus } from "./capture.ts";
 import type { StageContext } from "./context.ts";
 import { fetchRun, sample } from "./fetch.ts";
 import { judge } from "./judge.ts";
+import { decide, explain, find, runs, score } from "./decide.ts";
 import { layout, readJsonOr } from "./store.ts";
 import type {
   CaptureSummary,
   CorpusSummary,
+  DecideSummary,
+  Explanation,
   FetchSummary,
   JudgeSummary,
   Manifest,
@@ -114,5 +118,32 @@ export class Organiser {
     o: { run: string; schemes?: string[]; force?: boolean; concurrency?: number },
   ): Promise<JudgeSummary> {
     return judge(this.#ctx, o);
+  }
+
+  /** Pure over stored files. Default: every scheme, at the injected clock. */
+  decide(
+    o: { run: string; schemes?: string[]; now?: number },
+  ): Promise<Record<string, DecideSummary>> {
+    return decide(this.#ctx, o);
+  }
+
+  /** One scheme's stored decisions against its golden cases. */
+  score(o: { run: string; scheme: string }): Promise<ScoreResult> {
+    return score(this.#ctx, o);
+  }
+
+  /** The facts, answers and decision behind one message's category. */
+  explain(o: { run: string; id: string; scheme: string }): Promise<Explanation> {
+    return explain(this.#ctx, o);
+  }
+
+  /** Run messages whose subject or From contains `text`, case-insensitively. */
+  find(o: { run: string; text: string }): Promise<OrganiseMessage[]> {
+    return find(this.#ctx, o);
+  }
+
+  /** Every run's manifest, newest first. */
+  runs(): Promise<Manifest[]> {
+    return runs(this.#ctx);
   }
 }
