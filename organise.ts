@@ -5,3 +5,6 @@
  */
 
 export * from "./lib/organise/mod.ts";
+
+/** Core message types the organise functions take, re-exported so their signatures resolve. */
+export type { Message, MessagePart, MessagePartBody, MessagePartHeader } from "./mod.ts";

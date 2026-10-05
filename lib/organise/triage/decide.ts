@@ -30,6 +30,7 @@ import { senderOf } from "../mail.ts";
 export interface AgeStep {
   /** Omit on the last step, which applies to everything older. */
   underYears?: number;
+  /** The lowest probability that clears this step. */
   bar: number;
 }
 
@@ -122,6 +123,10 @@ export interface DecisionThresholds {
   };
 }
 
+/**
+ * The thresholds used unless overridden. Calibrated on one mailbox; move any group with
+ * {@link mergeThresholds}.
+ */
 export const DEFAULT_THRESHOLDS: DecisionThresholds = {
   important: {
     recordAtLeast: 0.85,
@@ -174,6 +179,11 @@ export type ThresholdOverrides = {
   [K in keyof DecisionThresholds]?: Partial<DecisionThresholds[K]>;
 };
 
+/**
+ * The defaults with `overrides` merged in, group by group.
+ *
+ * Throws on an unknown group name, so a misspelt override cannot silently do nothing.
+ */
 export function mergeThresholds(overrides: ThresholdOverrides = {}): DecisionThresholds {
   const out = structuredClone(DEFAULT_THRESHOLDS) as unknown as Record<
     string,
@@ -196,21 +206,31 @@ export function ageBar(steps: AgeStep[], ageYears: number): number {
 
 // ── inputs and outputs ───────────────────────────────────────────────────────
 
+/** One message as the engine sees it: headers, delivery envelope and the model's answers. */
 export interface DecisionInput {
+  /** Gmail message id. */
   id: string;
+  /** The `From` header. */
   from: string;
+  /** The `Subject` header. */
   subject: string;
   /** The Date header. Used for age when `internalDate` is absent. */
   date?: string;
   /** ms since epoch as Gmail reports it: more reliable than a sender's Date header. */
   internalDate?: string;
+  /** The delivery headers, when known. */
   envelope?: Envelope;
+  /** The decision model's answers by question id. A missing answer counts as unanswered. */
   answers: Record<string, Answer | undefined>;
 }
 
+/** Everything a decision depends on besides the message itself. */
 export interface DecisionContext {
+  /** Sender rulings, applied before any model answer. */
   policy: SenderPolicy;
+  /** Who you have corresponded with. */
   relationships: Relationships;
+  /** The bars the routes compare against. See {@link mergeThresholds}. */
   thresholds: DecisionThresholds;
   /** ms since epoch. Injected, so a decision is reproducible. */
   now: number;
@@ -219,15 +239,23 @@ export interface DecisionContext {
 /** Why a sender's mail is treated as correspondence. `null`: it is not. */
 export type Protection = "address" | "domain" | null;
 
+/** The verdict on one message, and why. */
 export interface Decision {
+  /** Gmail message id. */
   id: string;
+  /** What the message is. */
   verdict: Verdict;
   /** The route that decided. */
   route: string;
+  /** A one-line reason, naming the scores that decided. */
   why: string;
+  /** The true author's address, after undoing a list's rewrite of `From`. */
   sender: string;
+  /** The domain of `sender`. */
   senderDomain: string;
+  /** The `Subject` header. */
   subject: string;
+  /** Why the sender's mail was treated as correspondence, if it was. */
   protected: Protection;
 }
 
@@ -235,14 +263,21 @@ export interface Decision {
 
 /** Everything a route may look at, computed once per message. */
 export interface Facts {
+  /** The true author's address. */
   sender: string;
+  /** The domain of `sender`. */
   domain: string;
+  /** The `Subject` header, or empty. */
   subject: string;
+  /** Age in years at `now`. 0 when undated. */
   ageYears: number;
+  /** The delivery headers, when known. */
   envelope?: Envelope;
   /** A Noul probability, or NaN when the question was not answered. */
   p(question: string): number;
+  /** The chosen option id for a Choice question, or undefined when unanswered. */
   choice(question: string): string | undefined;
+  /** Why the sender's mail counts as correspondence, if it does. */
   protection: Protection;
   /** How well the sent-mail corpus knows the sender. */
   strength: Strength;
@@ -286,6 +321,10 @@ function ageInYears(input: DecisionInput, now: number): number {
 
 const domainPart = (address: string) => (address.includes("@") ? address.split("@").pop()! : "");
 
+/**
+ * The facts every route reads, computed once per message. Exported so a custom route can
+ * be tested against the same facts.
+ */
 export function factsOf(input: DecisionInput, ctx: DecisionContext): Facts {
   const env = input.envelope;
   // The true author: a Google Group rewrites From to the group itself.
@@ -312,20 +351,29 @@ export function factsOf(input: DecisionInput, ctx: DecisionContext): Facts {
 
 // ── routes ───────────────────────────────────────────────────────────────────
 
+/** What a route returns when it decides. */
 export interface Outcome {
+  /** What the message is. */
   verdict: Verdict;
+  /** A one-line reason, naming the scores that decided. */
   why: string;
 }
 
+/**
+ * One step in the decision order. The first route to return an outcome decides; returning
+ * undefined passes the message on.
+ */
 export interface Route {
+  /** Reported as {@link Decision.route}. */
   name: string;
+  /** Decide the message, or return undefined to pass it on. */
   decide(f: Facts, ctx: DecisionContext): Outcome | undefined;
 }
 
 const fmt = (n: number) => n.toFixed(2);
 
 /**
- * The Noul question ids the routes read. The wording is the operator's, in
+ * The Noul question ids the routes read. The wording is the account holder's, in
  * config; the ids are the contract. A missing question never deletes anything:
  * the routes that need it simply do not fire.
  */
@@ -561,6 +609,11 @@ function heldBecause(f: Facts, t: DecisionThresholds): string {
   return held.join(", ") || "no route";
 }
 
+/**
+ * Run `routes` in order and return the first decision.
+ *
+ * A message no route claims is kept, with a `why` naming the bars it missed.
+ */
 export function decide(
   input: DecisionInput,
   ctx: DecisionContext,

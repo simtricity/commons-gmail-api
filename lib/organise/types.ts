@@ -18,6 +18,7 @@ export type Question =
 
 /** One typed answer. `noul` carries no confidence; the probability is the answer. */
 export interface Answer {
+  /** Which kind of question this answers. */
   type: "choice" | "score" | "noul";
   /** Choice: the selected option id. */
   choice?: string;
@@ -27,18 +28,27 @@ export interface Answer {
   noul?: number;
   /** Choice/Score only: how peaked the distribution is. Not a correctness measure. */
   confidence?: number;
+  /** Choice/Score only: the probability of each option or level. */
   probabilities?: Record<string, number>;
+  /** Choice/Score only: a readable name for each key of `probabilities`, when sent. */
   legend?: Record<string, string>;
 }
 
+/** Token counts for one decision-model call. */
 export interface Usage {
+  /** Tokens in the request. */
   input_tokens: number;
+  /** Tokens in the response. */
   output_tokens: number;
 }
 
+/** A decision-model response: one answer per question id. */
 export interface SystemOneResponse {
+  /** The model that answered. */
   model: string;
+  /** Answers by question id. */
   answers: Record<string, Answer>;
+  /** What the call cost. */
   usage: Usage;
 }
 
@@ -48,12 +58,19 @@ export interface SystemOneResponse {
 
 /** What a person would glance at to judge a message. */
 export interface MailState {
+  /** The `From` header. */
   from: string;
+  /** The `To` header. */
   to: string;
+  /** The `Subject` header. */
   subject: string;
+  /** The `Date` header. */
   date: string;
+  /** Whether the message carries `In-Reply-To`. */
   is_reply: boolean;
+  /** Whether the message carries `List-Unsubscribe`. */
   has_list_unsubscribe: boolean;
+  /** Body text, quoted-reply lines removed and truncated. */
   body: string;
 }
 
@@ -67,11 +84,15 @@ export interface MailState {
  * whole mailbox while ignoring one costs nothing.
  */
 export interface CapturedMessage {
+  /** Gmail message id. */
   id: string;
+  /** Gmail thread id. */
   threadId: string;
   /** ms since epoch, as Gmail reports it. */
   internalDate: string;
+  /** Gmail label ids at capture time. */
   labelIds?: string[];
+  /** Gmail's size estimate, in bytes. */
   sizeEstimate?: number;
   /** Raw header values, exactly as sent. Absent headers are omitted. */
   headers: Record<string, string>;
@@ -91,8 +112,11 @@ export interface CaptureState {
  * because an outgoing copy carries no `List-*` headers at all.
  */
 export interface ListEntry {
+  /** The RFC 2919 `List-Id`. */
   listId: string;
+  /** Where posts go, once learned from sent mail. */
   address?: string;
+  /** Messages received from the list. */
   received: number;
   /** Whether any sent message belongs to this list. */
   youPost: boolean;
@@ -100,7 +124,9 @@ export interface ListEntry {
 
 /** One correspondent in the sent-mail corpus. */
 export interface Correspondent {
+  /** Lower-cased email address. */
   address: string;
+  /** The domain of `address`. */
   domain: string;
   /** A list address is not a person, and should not be read as a relationship. */
   kind: "person" | "list";
@@ -108,17 +134,26 @@ export interface Correspondent {
   genuine: number;
   /** Messages reaching them only via an auto-reply or a mailing list post. */
   incidental: number;
+  /** ISO 8601 time of the first message sent to them. Empty when unknown. */
   firstSeen: string;
+  /** ISO 8601 time of the last message sent to them. Empty when unknown. */
   lastSeen: string;
 }
 
+/** Who you have written to, built from sent mail by `CorpusBuilder`. */
 export interface Corpus {
+  /** When the corpus was built, ISO 8601. */
   builtAt: string;
+  /** The Gmail search query that selected the sent mail. */
   query: string;
+  /** Sent messages read. */
   scanned: number;
+  /** Of those, auto-replies. */
   autoReplies: number;
+  /** Of those, mailing-list posts. */
   listPosts: number;
-  /** Addresses that are the operator's own, excluded from correspondents. */
+  /** Addresses that are the account holder's own, excluded from correspondents. */
   selfAddresses?: string[];
+  /** Everyone written to, most genuine correspondence first. */
   correspondents: Correspondent[];
 }

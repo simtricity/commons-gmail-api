@@ -14,15 +14,23 @@ import { senderOf } from "./mail.ts";
 
 /** The headers that describe delivery rather than content. Absent headers are "". */
 export interface Envelope {
+  /** `From`. */
   from: string;
+  /** `Return-Path`: the bounce address, often a VERP address on bulk mail. */
   returnPath: string;
+  /** `Sender`, set when someone sends on behalf of `From`. */
   sender: string;
   /** Google Groups keeps the true author here when it rewrites From. */
   originalSender: string;
+  /** `List-Unsubscribe` (RFC 2369). */
   listUnsubscribe: string;
+  /** `List-Id` (RFC 2919). */
   listId: string;
+  /** `List-Post` (RFC 2369): present when the list accepts posts. */
   listPost: string;
+  /** `Precedence`, such as `bulk` or `list`. */
   precedence: string;
+  /** `Auto-Submitted` (RFC 3834), such as `auto-replied`. Absent or `no` when a person sent it. */
   autoSubmitted: string;
 }
 

@@ -19,6 +19,7 @@ export const VERDICTS = ["delete", "defer", "keep", "important"] as const;
  */
 export type Verdict = typeof VERDICTS[number];
 
+/** Whether a value is one of {@link VERDICTS}. */
 export function isVerdict(value: unknown): value is Verdict {
   return typeof value === "string" && (VERDICTS as readonly string[]).includes(value);
 }

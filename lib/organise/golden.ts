@@ -1,5 +1,5 @@
 /**
- * A golden set: messages the operator has ruled on, replayed against the engine.
+ * A golden set: messages the account holder has ruled on, replayed against the engine.
  *
  * Every time someone says "this one should have gone" or "never lose this", that
  * ruling becomes a case. Re-deciding is free, so every threshold change and every
@@ -10,10 +10,13 @@
 
 import { isVerdict, type Verdict } from "./verdict.ts";
 
+/** One ruled message and the verdicts it may get. */
 export interface GoldenCase {
+  /** Gmail message id. */
   id: string;
   /** The verdict wanted, or several that are all acceptable. */
   expect: Verdict | Verdict[];
+  /** Why it was ruled this way, for whoever reads a failure. */
   note?: string;
   /**
    * Verdicts that would be a critical failure rather than a miss: a must-keep
@@ -22,6 +25,12 @@ export interface GoldenCase {
   never?: Verdict[];
 }
 
+/**
+ * Parse and validate a golden set shaped `{ "cases": [...] }`.
+ *
+ * Throws on a case with no `id`, an unknown verdict, or a verdict listed under both
+ * `expect` and `never`.
+ */
 export function parseGolden(raw: unknown): GoldenCase[] {
   const cases = (raw as { cases?: unknown })?.cases;
   if (!Array.isArray(cases)) throw new Error(`golden set needs a "cases" array`);
@@ -41,24 +50,40 @@ export function parseGolden(raw: unknown): GoldenCase[] {
   });
 }
 
+/** One case the run decided differently from its ruling. */
 export interface GoldenFailure {
+  /** The case that failed. */
   case: GoldenCase;
+  /** The verdict the run gave. */
   got: Verdict;
+  /** The route that gave it. */
   route: string;
+  /** That route's reason. */
   why: string;
+  /** Whether `got` is one of the case's `never` verdicts. */
   critical: boolean;
 }
 
+/** A golden set replayed against one run's decisions. */
 export interface EvalResult {
   /** Cases whose message is in the run. */
   evaluated: number;
+  /** Evaluated cases that got an acceptable verdict. */
   passed: number;
+  /** Every evaluated case that did not, critical or not. */
   failures: GoldenFailure[];
+  /** How many failures are critical. Any at all fails the evaluation. */
   criticalFailures: number;
   /** Cases whose message this run did not decide. */
   notInRun: string[];
 }
 
+/**
+ * Score a run's decisions against a golden set.
+ *
+ * A case whose message the run did not decide is listed in `notInRun`, not counted as a
+ * failure.
+ */
 export function evaluate(
   cases: GoldenCase[],
   decisions: Iterable<{ id: string; verdict: Verdict; route: string; why: string }>,

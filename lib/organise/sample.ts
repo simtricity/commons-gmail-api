@@ -7,8 +7,11 @@
  * @module
  */
 
+/** A message as a listing returns it, before any read. */
 export interface Listed {
+  /** Gmail message id. */
   id: string;
+  /** Gmail thread id. */
   threadId: string;
 }
 

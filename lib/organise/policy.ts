@@ -1,5 +1,5 @@
 /**
- * Sender rulings: the operator's word on a sender, which outranks every model.
+ * Sender rulings: the account holder's word on a sender, which outranks every model.
  *
  * They encode what no model can know, such as that one machine-sent export holds
  * valuable private data while another newsletter from the same company does not.
@@ -14,15 +14,20 @@
 
 import { isVerdict, type Verdict } from "./verdict.ts";
 
+/** The ruling on one sender. */
 export interface Ruling {
+  /** The verdict every message from this sender gets. */
   verdict: Verdict;
+  /** Why, as written in the policy file. */
   note: string;
 }
 
+/** Rulings keyed by lower-cased sender address. */
 export type SenderPolicy = ReadonlyMap<string, Ruling>;
 
 /** Thrown for a policy file that would rule ambiguously. */
 export class PolicyError extends Error {
+  /** `message` names the offending verdict or address. */
   constructor(message: string) {
     super(message);
     this.name = "PolicyError";

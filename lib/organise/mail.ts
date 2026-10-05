@@ -144,7 +144,7 @@ export function isListMail(msg: Message): boolean {
  * Group forward, and `"jo jo@old.example" <jo@new.example>` is an address book
  * that stringified a contact. Reading every address in the header promotes that
  * noise to a real sender, which is how a correspondent ends up misfiled as one
- * of the operator's own addresses and silently dropped from a corpus.
+ * of the account holder's own addresses and silently dropped from a corpus.
  *
  * Falls back to a bare address when there are no angle brackets at all.
  */

@@ -135,11 +135,17 @@ export function fromCaptured(rec: CapturedMessage): Message {
 
 /** What is wrong with a shard, and what is merely worth knowing. */
 export interface ShardAudit {
+  /** Records in the shard. */
   count: number;
   /** Oldest and newest `internalDate` held, ms since epoch. 0 when empty. */
   first: number;
+  /** Newest `internalDate` held, ms since epoch. 0 when empty. */
   last: number;
+  /**
+   * Defects that make the shard untrustworthy: unparseable lines, duplicate ids, missing `From`.
+   */
   problems: string[];
+  /** Observations that are expected in a real mailbox and need no action. */
   notes: string[];
 }
 

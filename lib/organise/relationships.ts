@@ -19,6 +19,10 @@ import type { Corpus } from "./types.ts";
  */
 export type Strength = "strong" | "known" | "none";
 
+/**
+ * How much correspondence makes a relationship. Every field is optional; see
+ * {@link RELATIONSHIP_DEFAULTS}.
+ */
 export interface RelationshipOptions {
   /** Genuine messages sent before a relationship counts as strong. */
   strongMinGenuine?: number;
@@ -30,6 +34,7 @@ export interface RelationshipOptions {
   domainMinContacts?: number;
 }
 
+/** The value of every option left out. */
 export const RELATIONSHIP_DEFAULTS: Required<RelationshipOptions> = {
   strongMinGenuine: 5,
   strongMinSpanDays: 30,
@@ -45,6 +50,7 @@ export const RELATIONSHIP_DEFAULTS: Required<RelationshipOptions> = {
 const SHARED_PROVIDER =
   /^(gmail|googlemail|yahoo|ymail|rocketmail|hotmail|outlook|live|msn|icloud|me|mac|aol|gmx|mail|protonmail|proton|pm|zoho|yandex|btinternet|btopenworld|talktalk|tiscali|virginmedia|ntlworld|blueyonder|sky|fastmail)\.[a-z.]+$/i;
 
+/** Whether a domain belongs to a public mailbox provider, whose users share nothing else. */
 export function isSharedProvider(domain: string): boolean {
   return SHARED_PROVIDER.test(domain);
 }
@@ -54,12 +60,18 @@ interface Person {
   spanDays: number;
 }
 
+/**
+ * Sender strength and domain trust, read from a sent-mail corpus.
+ *
+ * Mailing lists in the corpus are ignored. Addresses and domains match case-insensitively.
+ */
 export class Relationships {
   readonly #people = new Map<string, Person>();
   readonly #domains = new Map<string, { contacts: number; sent: number }>();
   readonly #selfDomains: Set<string>;
   readonly #opts: Required<RelationshipOptions>;
 
+  /** Index a corpus. Only `correspondents` and `selfAddresses` are read. */
   constructor(
     corpus: Pick<Corpus, "correspondents" | "selfAddresses">,
     opts: RelationshipOptions = {},
@@ -83,6 +95,7 @@ export class Relationships {
     }
   }
 
+  /** How well you know this address. See {@link Strength}. */
   strength(address: string): Strength {
     const p = this.#people.get(address.toLowerCase());
     if (!p) return "none";
@@ -99,7 +112,7 @@ export class Relationships {
       d!.contacts >= this.#opts.domainMinContacts;
   }
 
-  /** One of the operator's own domains. Mail "from" it is usually relayed, not written. */
+  /** One of the account holder's own domains. Mail "from" it is usually relayed, not written. */
   isSelfDomain(domain: string): boolean {
     return this.#selfDomains.has(domain.toLowerCase());
   }

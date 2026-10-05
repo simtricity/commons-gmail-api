@@ -35,8 +35,8 @@ export type SendKind = "genuine" | "auto-reply" | "list-post";
  *
  * Do **not** try to learn list addresses by harvesting `To` and `Cc` from
  * delivered list mail. A list delivery carries other individual recipients
- * alongside the list, and doing so misidentified 39 real colleagues as mailing
- * lists on a 428-correspondent corpus.
+ * alongside the list, and doing so misidentifies real colleagues as mailing
+ * lists.
  */
 export function classifySend(msg: Message, listAddresses?: ReadonlySet<string>): SendKind {
   if (isAutoReply(msg)) return "auto-reply";
@@ -58,19 +58,20 @@ interface Acc {
   last: number;
 }
 
+/** What a {@link CorpusBuilder} needs to know before the first message. */
+export interface CorpusOptions {
+  /** Known mailing-list posting addresses. See {@link classifySend}. */
+  listAddresses?: ReadonlySet<string>;
+  /** The account holder's own addresses, never counted as correspondents. */
+  selfAddresses?: ReadonlySet<string>;
+}
+
 /**
  * Accumulates recipients across a stream of sent messages.
  *
  * Kept as a class so a long run can fold messages in as they arrive rather than
  * holding half a mailbox in memory.
  */
-export interface CorpusOptions {
-  /** Known mailing-list posting addresses. See {@link classifySend}. */
-  listAddresses?: ReadonlySet<string>;
-  /** The operator's own addresses, never counted as correspondents. */
-  selfAddresses?: ReadonlySet<string>;
-}
-
 export class CorpusBuilder {
   #people = new Map<string, Acc>();
   #scanned = 0;
@@ -78,10 +79,15 @@ export class CorpusBuilder {
   #list = 0;
   #opts: CorpusOptions;
 
+  /** Start an empty corpus. `opts` holds for the whole run. */
   constructor(opts: CorpusOptions = {}) {
     this.#opts = opts;
   }
 
+  /**
+   * Fold in one sent message and return how it reached its recipients. Your own addresses are
+   * skipped as recipients.
+   */
   add(msg: Message): SendKind {
     const kind = classifySend(msg, this.#opts.listAddresses);
     this.#scanned++;
@@ -181,7 +187,7 @@ export function listsOf(corpus: Corpus): Correspondent[] {
 /**
  * Which addresses this mailbox sends as.
  *
- * An operator accumulates aliases over a working life, and every one of them
+ * An account holder accumulates aliases over a working life, and every one of them
  * must be kept out of the correspondent list — writing as yourself is not
  * correspondence. The addresses cannot be asked for directly: the settings API
  * that lists them needs a wider OAuth scope than a read-only tool should hold,

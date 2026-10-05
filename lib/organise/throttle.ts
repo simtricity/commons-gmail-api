@@ -31,13 +31,25 @@ export function isRetryable(err: unknown): boolean {
   return err instanceof TypeError;
 }
 
+/** How {@link withRetry} retries. */
 export interface RetryOptions {
+  /** Total tries, the first included. Default 6. */
   attempts?: number;
+  /**
+   * First backoff for a server error or network failure, in ms. Default 500. A quota refusal
+   * (429, or a rate-limit 403) starts at 8 s instead, because quota windows are minutes long.
+   */
   baseMs?: number;
   /** Called before each sleep, for progress reporting. */
   onRetry?: (attempt: number, waitMs: number, err: unknown) => void;
 }
 
+/**
+ * Call `fn`, retrying quota refusals, 5xx responses and network failures.
+ *
+ * Backoff doubles per attempt with random jitter, each wait capped at 75 s. Any other
+ * error, and the last attempt's, is rethrown.
+ */
 export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
   const { attempts = 6, baseMs = 500, onRetry } = opts;
   let lastErr: unknown;
@@ -68,10 +80,15 @@ export class RateLimiter {
   private tokens: number;
   private last = performance.now();
 
+  /**
+   * `ratePerSec` is the sustained rate. `burst` is how many can be taken at once after a
+   * pause, and defaults to `ratePerSec`.
+   */
   constructor(private ratePerSec: number, private burst = ratePerSec) {
     this.tokens = burst;
   }
 
+  /** Wait until a token is free, then take it. */
   async take(): Promise<void> {
     while (true) {
       const now = performance.now();

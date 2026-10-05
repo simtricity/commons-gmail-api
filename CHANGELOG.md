@@ -26,6 +26,8 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
   envelope reading, the sent-mail correspondent corpus and relationships, the sender policy,
   sampling, throttling, golden-set parsing and the `decide` triage routes with
   `DEFAULT_THRESHOLDS` and `mergeThresholds`. The root entry point does not import it.
+  `./organise` also re-exports the core `Message`, `MessagePart`, `MessagePartBody` and
+  `MessagePartHeader` types its functions take. Every exported symbol is documented.
 - The organise test fixtures use only reserved domains (`.example`, `.test`).
 
 ### Changed
