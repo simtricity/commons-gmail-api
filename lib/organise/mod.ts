@@ -18,3 +18,5 @@ export * from "./throttle.ts";
 export * from "./types.ts";
 export * from "./verdict.ts";
 export * from "./triage/decide.ts";
+export * from "./triage/questions.ts";
+export * from "./triage/scheme.ts";

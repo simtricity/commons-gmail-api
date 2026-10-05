@@ -29,6 +29,12 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
   `./organise` also re-exports the core `Message`, `MessagePart`, `MessagePartBody` and
   `MessagePartHeader` types its functions take. Every exported symbol is documented.
 - The organise test fixtures use only reserved domains (`.example`, `.test`).
+- **Schemes** (`./organise`): `Scheme`, `labelFor` and `labelPrefixOf`, and `triageScheme()`,
+  the four-verdict engine as a scheme. It decides exactly as `decide()` with the engine's own
+  routes and default thresholds, and labels by each message's own UTC year.
+- `TRIAGE_DEFAULT_QUESTIONS`: generic wording for the eight triage questions, so triage runs
+  with no question file. One phrase in `carries_private_data` reads "data exports" rather
+  than an industry-specific term; wording is overridable per question.
 
 ### Changed
 
