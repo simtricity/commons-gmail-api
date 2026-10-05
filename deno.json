@@ -31,6 +31,7 @@
     "@std/fs": "jsr:@std/fs@^1.0.19"
   },
   "fmt": {
-    "lineWidth": 100
+    "lineWidth": 100,
+    "exclude": ["tests/organise/contract/"]
   }
 }
