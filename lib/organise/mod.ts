@@ -12,6 +12,7 @@ export * from "./golden.ts";
 export * from "./judge.ts";
 export * from "./mail.ts";
 export * from "./message.ts";
+export * from "./organiser/mod.ts";
 export * from "./policy.ts";
 export * from "./profile.ts";
 export * from "./questions.ts";
