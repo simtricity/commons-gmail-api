@@ -8,8 +8,9 @@
  * @module
  */
 
+import { sha256Hex } from "../mime.ts";
 import { ProfileError, type Scheme } from "./scheme.ts";
-import type { Question } from "./types.ts";
+import type { Answer, Question } from "./types.ts";
 
 /**
  * JSON with every object's keys sorted, recursively, so two values that differ
@@ -54,4 +55,53 @@ export function questionsFor(schemes: readonly Scheme[]): Record<string, Questio
     }
   }
   return out;
+}
+
+/** What, besides the question, changes the answer: the context and the body cap. Not the model. */
+export interface JudgementShape {
+  /** The background facts sent with every message, if any. */
+  context?: unknown;
+  /** Characters of body shown to the model. */
+  bodyChars: number;
+}
+
+/**
+ * A fingerprint of everything that determines one question's answer: 16 hex
+ * characters, stable across key order.
+ *
+ * The model is deliberately left out. A model alias moves over time, and
+ * re-asking every stored question whenever it moved would cost a full re-judge
+ * for no change in the question.
+ */
+export async function questionHash(question: Question, shape: JudgementShape): Promise<string> {
+  const text = canonicalJson({
+    question,
+    context: shape.context ?? null,
+    bodyChars: shape.bodyChars,
+  });
+  return (await sha256Hex(new TextEncoder().encode(text))).slice(0, 16);
+}
+
+/** One message's stored answers, with the hash each answer was asked under. */
+export interface StoredAnswers {
+  /** Gmail message id. */
+  id: string;
+  /** Answers by question id. */
+  answers: Record<string, Answer>;
+  /** The {@link questionHash} each answer was asked under, by question id. */
+  asked: Record<string, string>;
+}
+
+/**
+ * Question ids to ask: never answered, or answered under a different hash.
+ *
+ * Rewording one question changes only its hash, so only it is asked again.
+ */
+export function pendingQuestions(
+  stored: StoredAnswers | undefined,
+  hashes: Readonly<Record<string, string>>,
+): string[] {
+  return Object.keys(hashes).filter((id) =>
+    !stored?.answers[id] || stored.asked[id] !== hashes[id]
+  );
 }
