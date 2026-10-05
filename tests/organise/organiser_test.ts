@@ -94,3 +94,59 @@ Deno.test("corpus: needs a sent capture; writes under the data directory", async
   );
   await w.done();
 });
+
+Deno.test("sample and fetch: deterministic, replied threads out, grown threads rejected unread, resumable", async () => {
+  const w = await setup();
+  const org = await Organiser.open(w.dir, w.io);
+  await org.capture({ source: "sent" });
+  const m = await org.sample({ run: "y2020", year: 2020, size: 100, singleMessage: true });
+  assertEquals(m.sample?.seed, 2020 * 10_000 + 100);
+  const drawn = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/y2020/sample.json`)).map((
+    x: { id: string },
+  ) => x.id);
+  assert(!drawn.includes("r6"), "a thread you replied into is never sampled");
+  await assertRejects(
+    () => org.sample({ run: "y2020", year: 2020 }),
+    Error,
+    "already has a sample",
+  );
+  await assertRejects(() => org.sample({ run: "x", year: 2020, query: "label:x" }), TypeError);
+  await assertRejects(() => org.sample({ run: "../x", year: 2020 }), TypeError);
+
+  const f = await org.fetch({ run: "y2020" });
+  assertEquals(f.rejected, 1);
+  assertEquals(w.mailbox.reads.get("r7"), undefined, "the grown thread is never read");
+  assert(f.quotaRetries >= 1, "the quota refusal was waited out");
+  const reads = [...w.mailbox.reads.values()].reduce((a, b) => a + b, 0);
+  const again = await org.fetch({ run: "y2020" });
+  assertEquals([again.fetched, again.failures], [f.fetched, 0]);
+  assertEquals(
+    [...w.mailbox.reads.values()].reduce((a, b) => a + b, 0),
+    reads,
+    "nothing read twice",
+  );
+  const manifest = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/y2020/manifest.json`));
+  assertEquals(
+    manifest.fetch.at,
+    new Date(NOW).toISOString(),
+    "timestamps come from the injected clock",
+  );
+  await w.done();
+});
+
+Deno.test("sample: a query sample, and a redraw clears derived files but never an applied run", async () => {
+  const w = await setup();
+  const org = await Organiser.open(w.dir, w.io);
+  const q = await org.sample({ run: "q", query: "after:2020/06/01", size: 3 });
+  assertEquals([q.year, q.sample?.seed, q.sample?.size], [undefined, 3, 3]);
+  await org.fetch({ run: "q" });
+  await org.sample({ run: "q", query: "after:2020/06/01", size: 3, force: true });
+  await assertRejects(() => Deno.stat(`${w.dir}/runs/q/messages.json`), Deno.errors.NotFound);
+  await Deno.writeTextFile(`${w.dir}/runs/q/apply.triage.log`, "{}\n");
+  await assertRejects(
+    () => org.sample({ run: "q", query: "after:2020/06/01", force: true }),
+    Error,
+    "has been applied",
+  );
+  await w.done();
+});

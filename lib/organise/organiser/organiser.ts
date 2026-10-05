@@ -9,8 +9,16 @@ import { parseProfile, type Profile } from "../profile.ts";
 import { ProfileError, type SenderRulings } from "../scheme.ts";
 import { capture, corpus } from "./capture.ts";
 import type { StageContext } from "./context.ts";
+import { fetchRun, sample } from "./fetch.ts";
 import { layout, readJsonOr } from "./store.ts";
-import type { CaptureSummary, CorpusSummary, OrganiserIO } from "./types.ts";
+import type {
+  CaptureSummary,
+  CorpusSummary,
+  FetchSummary,
+  Manifest,
+  OrganiserIO,
+  SampleOptions,
+} from "./types.ts";
 
 /** Each scheme's categories, by scheme id, for checking golden cases. */
 function categoriesOf(profile: Profile): Record<string, readonly string[]> {
@@ -87,5 +95,15 @@ export class Organiser {
   /** Sent-mail corpus from the sent capture (two passes: self addresses first). */
   corpus(o: { minGenuine?: number; years?: number[] } = {}): Promise<CorpusSummary> {
     return corpus(this.#ctx, o);
+  }
+
+  /** Deterministic sample; never a thread the sent capture shows you wrote into. */
+  sample(o: SampleOptions): Promise<Manifest> {
+    return sample(this.#ctx, o);
+  }
+
+  /** Full reads, paced; single-message samples settled by one listing pass over the mailbox. Resumable. */
+  fetch(o: { run: string }): Promise<FetchSummary> {
+    return fetchRun(this.#ctx, o);
   }
 }
