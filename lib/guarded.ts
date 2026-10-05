@@ -116,6 +116,35 @@ export class WriteGuardError extends Error {
   }
 }
 
+/**
+ * A scoped relabel failed part-way. The chunks before the failure are applied in Gmail and the
+ * write log has a `partial` line for them; this error says the same, so a caller can record what
+ * landed. The original error is the `cause`.
+ */
+export class ScopedRelabelError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "ScopedRelabelError";
+  /** HTTP status of the failed request, when the cause carried one. */
+  readonly status?: number;
+  /**
+   * Build from the failed request's error.
+   * @param callsDone Chunks applied before the failure, in `ids` order: the first
+   *   `callsDone x BATCH_MODIFY_MAX` ids landed.
+   * @param idsSha256 The request's `idsSha256`, as the write log has it.
+   * @param cause The error the failed chunk raised.
+   */
+  constructor(readonly callsDone: number, readonly idsSha256: string, cause: unknown) {
+    super(
+      `scoped relabel failed after ${callsDone} applied chunk(s): ${
+        cause instanceof Error ? cause.name : typeof cause
+      }`,
+      { cause },
+    );
+    const status = (cause as { status?: unknown })?.status;
+    if (typeof status === "number") this.status = status;
+  }
+}
+
 /** Input to {@link GuardedWriter.planScopedRelabel} and {@link GuardedWriter.scopedRelabel}. */
 export interface ScopedRelabelRequest {
   /** The caller's label prefix. Non-empty and ends in `/`, e.g. `sorter/`. */
@@ -323,7 +352,8 @@ export class GuardedWriter {
    * `BATCH_MODIFY_MAX`; one log line per call, with `idsSha256` (sha256 of the sorted ids
    * joined by `\n`) in place of the ids. If a chunk fails, the line is still written, with
    * `partial: true`, `callsDone` (chunks applied, in `ids` order) and `error` (class name and
-   * HTTP status only), and the error is rethrown. Nothing to add, nothing to remove or no ids is
+   * HTTP status only), and a {@link ScopedRelabelError} carrying the same, with the original as
+   * its `cause`, is thrown. Nothing to add, nothing to remove or no ids is
    * a no-op: no request, no log line.
    */
   async scopedRelabel(
@@ -366,7 +396,7 @@ export class GuardedWriter {
           ...(typeof status === "number" ? { status } : {}),
         },
       });
-      throw e;
+      throw new ScopedRelabelError(calls, line.idsSha256, e);
     }
     await this.record(line);
     return { ...plan, applied: true, calls };

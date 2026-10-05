@@ -56,3 +56,24 @@ Deno.test("the specifier scan catches every import form", () => {
     "./organise/side.ts",
   ]);
 });
+
+Deno.test("lib/organise reads no environment and computes no home-relative path", () => {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of Deno.readDirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory) walk(rel);
+      else if (e.name.endsWith(".ts")) files.push(rel);
+    }
+  };
+  walk("lib/organise");
+  assert(files.length > 20, "the walk sees the organise tree");
+  const banned = [/\bDeno\.env\b/, /\bHOME\b/, /\bhomedir\b/, /["'`]~\//, /USERPROFILE/];
+  const offenders: string[] = [];
+  for (const f of files) {
+    Deno.readTextFileSync(join(ROOT, f)).split("\n").forEach((line, i) => {
+      if (banned.some((b) => b.test(line))) offenders.push(`${f}:${i + 1}`);
+    });
+  }
+  assertEquals(offenders, [], "paths under lib/organise come only from the caller");
+});

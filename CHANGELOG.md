@@ -53,6 +53,11 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 
 ### Changed
 
+- `scopedRelabel` (new in this release) throws `ScopedRelabelError` when a chunk fails part-way,
+  carrying `callsDone`, `idsSha256` and `status`, with the original error as its `cause`, so a
+  caller can record which ids landed. The write log's `partial` line is unchanged.
+- `withRetry` (`./organise`) takes `quotaBaseMs`, the first wait after a quota refusal; the
+  default stays 8000 ms.
 - `./organise` golden-set refusals are `ProfileError` (a subclass of `Error`), and `GoldenCase`
   holds categories as strings with an optional `scheme`.
 - `WriteGuardError.code` adds `"bad-scope"` and `"outside-scope"`. A consumer that switches

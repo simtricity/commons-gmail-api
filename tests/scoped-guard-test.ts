@@ -2,6 +2,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   BATCH_MODIFY_MAX,
+  GmailApiError,
   GmailClient,
   GmailWriter,
   GuardedWriter,
@@ -11,6 +12,7 @@ import {
   SCOPE_COMPOSE,
   SCOPE_MODIFY,
   SCOPE_READONLY,
+  ScopedRelabelError,
   sha256Hex,
   WriteGuardError,
 } from "../mod.ts";
@@ -230,14 +232,18 @@ Deno.test("labelChange keeps its 25-id cap", async () => {
   assert((await g.labelChange({ name: "receipts", ids: ids.slice(0, 25) })).dryRun);
 });
 
-Deno.test("a chunk that fails part-way still logs what landed, then rethrows", async () => {
+Deno.test("a chunk that fails part-way logs what landed, then throws ScopedRelabelError", async () => {
   const { g, lines, modifies } = await setup({ failModifyAt: 2 });
   const ids = Array.from({ length: 2500 }, (_, i) => `m${i}`);
   const req = { prefix: "sorter/", add: "sorter/2020/keep", remove: [], ids };
   await g.scopedRelabel(req); // a dry run first: no line
   assertEquals(await lines(), []);
-  const e = await assertRejects(() => g.scopedRelabel({ ...req, apply: true }));
-  assertEquals((e as { status?: number }).status, 403, "the Gmail error is rethrown");
+  const e = await assertRejects(() => g.scopedRelabel({ ...req, apply: true }), ScopedRelabelError);
+  const err = e as ScopedRelabelError;
+  assertEquals([err.callsDone, err.status], [1, 403]);
+  assertEquals(err.idsSha256, await idsSha256(ids), "the same hash the log line carries");
+  assert(err.cause instanceof GmailApiError, "the Gmail error is the cause");
+  assertEquals((err.cause as GmailApiError).status, 403);
   assertEquals(modifies().length, 2, "chunk 3 is never attempted");
   const relabels = (await lines()).filter((l) => l.op === "label.relabel");
   assertEquals(relabels.length, 1);

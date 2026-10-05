@@ -37,9 +37,14 @@ export interface RetryOptions {
   attempts?: number;
   /**
    * First backoff for a server error or network failure, in ms. Default 500. A quota refusal
-   * (429, or a rate-limit 403) starts at 8 s instead, because quota windows are minutes long.
+   * starts at `quotaBaseMs` instead.
    */
   baseMs?: number;
+  /**
+   * First backoff for a quota refusal (429, or a rate-limit 403), in ms. Default 8000:
+   * Gmail's quota windows are minutes long, so shorter waits are refused again.
+   */
+  quotaBaseMs?: number;
   /** Called before each sleep, for progress reporting. */
   onRetry?: (attempt: number, waitMs: number, err: unknown) => void;
 }
@@ -51,7 +56,7 @@ export interface RetryOptions {
  * error, and the last attempt's, is rethrown.
  */
 export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
-  const { attempts = 6, baseMs = 500, onRetry } = opts;
+  const { attempts = 6, baseMs = 500, quotaBaseMs = 8000, onRetry } = opts;
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -62,7 +67,7 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
       // Quota windows are measured in minutes, so backoff in hundreds of
       // milliseconds can never clear one.
       const code = statusOf(err);
-      const base = code === 429 || code === 403 ? 8000 : baseMs;
+      const base = code === 429 || code === 403 ? quotaBaseMs : baseMs;
       const wait = Math.min(75_000, base * 2 ** i) + Math.random() * base;
       onRetry?.(i + 1, wait, err);
       await new Promise((r) => setTimeout(r, wait));
