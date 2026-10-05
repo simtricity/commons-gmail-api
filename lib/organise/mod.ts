@@ -12,6 +12,8 @@ export * from "./golden.ts";
 export * from "./mail.ts";
 export * from "./message.ts";
 export * from "./policy.ts";
+export * from "./profile.ts";
+export * from "./questions.ts";
 export * from "./relationships.ts";
 export * from "./sample.ts";
 export * from "./scheme.ts";
