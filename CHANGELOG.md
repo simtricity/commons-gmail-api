@@ -22,6 +22,11 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
   before the error is rethrown, with `partial: true`, `callsDone` (chunks applied, in `ids`
   order) and `error` (class name and HTTP status, never the body).
 - `ScopedRelabelRequest`, `ScopedRelabelPlan` and `ScopedRelabelResult` types.
+- **Organise engine** at the new `./organise` entry point (`@simtricity-commons/gmail-api/organise`):
+  envelope reading, the sent-mail correspondent corpus and relationships, the sender policy,
+  sampling, throttling, golden-set parsing and the `decide` triage routes with
+  `DEFAULT_THRESHOLDS` and `mergeThresholds`. The root entry point does not import it.
+- The organise test fixtures use only reserved domains (`.example`, `.test`).
 
 ### Changed
 

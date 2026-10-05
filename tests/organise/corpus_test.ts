@@ -31,7 +31,11 @@ Deno.test("address and domain extraction", () => {
   assertEquals(addressOf("Jo Bloggs <Jo@Example.COM>"), "jo@example.com");
   assertEquals(addressOf("bare@example.org"), "bare@example.org");
   assertEquals(domainOf("Jo <jo@mail.example.com>"), "mail.example.com");
-  assertEquals(addressesIn("a@x.com, B@Y.org <b@y.org>"), ["a@x.com", "b@y.org", "b@y.org"]);
+  assertEquals(addressesIn("a@x.example, B@Y.test <b@y.test>"), [
+    "a@x.example",
+    "b@y.test",
+    "b@y.test",
+  ]);
 });
 
 Deno.test("auto-replies are detected by subject", () => {
@@ -59,7 +63,7 @@ Deno.test("auto-replies are detected by header", () => {
 
 Deno.test("List-Post separates discussion lists from broadcast newsletters", () => {
   // A newsletter: unsubscribe only.
-  assertEquals(isListMail(msg({ "List-Unsubscribe": "<mailto:x@y.com>" })), false);
+  assertEquals(isListMail(msg({ "List-Unsubscribe": "<mailto:x@y.example>" })), false);
   // A list you can post into.
   assertEquals(
     isListMail(msg({ "List-Id": "<l.example.org>", "List-Post": "<mailto:l@x>" })),
@@ -114,21 +118,21 @@ Deno.test("the operator's own addresses are never correspondents", () => {
 
 Deno.test("an auto-reply never creates a genuine correspondent", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "Hello there", To: "real@partner.com" }));
+  b.add(msg({ Subject: "Hello there", To: "real@partner.example" }));
   b.add(msg({ Subject: "Out of office", To: "newsletter@bounce.example.com" }));
 
   const corpus = b.finish("in:sent");
   assertEquals(corpus.scanned, 2);
   assertEquals(corpus.autoReplies, 1);
-  assertEquals(corpus.correspondents.map((c) => c.address), ["real@partner.com"]);
+  assertEquals(corpus.correspondents.map((c) => c.address), ["real@partner.example"]);
   assertEquals(corpus.correspondents[0].kind, "person");
   assertEquals(b.incidentalOnly(), ["newsletter@bounce.example.com"]);
 });
 
 Deno.test("a contact reached both ways keeps its genuine count", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "Contract draft", To: "jo@partner.com" }));
-  b.add(msg({ Subject: "Out of office", To: "jo@partner.com" }));
+  b.add(msg({ Subject: "Contract draft", To: "jo@partner.example" }));
+  b.add(msg({ Subject: "Out of office", To: "jo@partner.example" }));
 
   const c = b.finish("in:sent").correspondents[0];
   assertEquals(c.genuine, 1);
@@ -137,45 +141,45 @@ Deno.test("a contact reached both ways keeps its genuine count", () => {
 
 Deno.test("recipients are counted once per message even if repeated", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "Hi", To: "jo@partner.com", Cc: "Jo <jo@partner.com>" }));
+  b.add(msg({ Subject: "Hi", To: "jo@partner.example", Cc: "Jo <jo@partner.example>" }));
   assertEquals(b.finish("in:sent").correspondents[0].genuine, 1);
 });
 
 Deno.test("minGenuine drops one-off contacts", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "a", To: "often@partner.com" }));
-  b.add(msg({ Subject: "b", To: "often@partner.com" }));
-  b.add(msg({ Subject: "c", To: "once@other.com" }));
+  b.add(msg({ Subject: "a", To: "often@partner.example" }));
+  b.add(msg({ Subject: "b", To: "often@partner.example" }));
+  b.add(msg({ Subject: "c", To: "once@other.example" }));
 
   assertEquals(b.finish("q", 1).correspondents.length, 2);
-  assertEquals(b.finish("q", 2).correspondents.map((c) => c.address), ["often@partner.com"]);
+  assertEquals(b.finish("q", 2).correspondents.map((c) => c.address), ["often@partner.example"]);
 });
 
 Deno.test("domain rollup aggregates people and messages", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "a", To: "one@partner.com" }));
-  b.add(msg({ Subject: "b", To: "two@partner.com" }));
-  b.add(msg({ Subject: "c", To: "two@partner.com" }));
-  b.add(msg({ Subject: "d", To: "solo@other.org" }));
+  b.add(msg({ Subject: "a", To: "one@partner.example" }));
+  b.add(msg({ Subject: "b", To: "two@partner.example" }));
+  b.add(msg({ Subject: "c", To: "two@partner.example" }));
+  b.add(msg({ Subject: "d", To: "solo@other.test" }));
 
   const domains = domainsOf(b.finish("q"));
-  assertEquals(domains[0], { domain: "partner.com", people: 2, messages: 3 });
-  assertEquals(domains[1], { domain: "other.org", people: 1, messages: 1 });
+  assertEquals(domains[0], { domain: "partner.example", people: 2, messages: 3 });
+  assertEquals(domains[1], { domain: "other.test", people: 1, messages: 1 });
 });
 
 Deno.test("lookups give O(1) whitelist membership", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "a", To: "jo@partner.com" }));
+  b.add(msg({ Subject: "a", To: "jo@partner.example" }));
   const { addresses, domains } = lookups(b.finish("q"));
-  assertEquals(addresses.has("jo@partner.com"), true);
-  assertEquals(domains.has("partner.com"), true);
-  assertEquals(addresses.has("someone@partner.com"), false);
+  assertEquals(addresses.has("jo@partner.example"), true);
+  assertEquals(domains.has("partner.example"), true);
+  assertEquals(addresses.has("someone@partner.example"), false);
 });
 
 Deno.test("first and last seen span the messages", () => {
   const b = new CorpusBuilder();
-  b.add(msg({ Subject: "a", To: "jo@partner.com" }, "1000000000000"));
-  b.add(msg({ Subject: "b", To: "jo@partner.com" }, "2000000000000"));
+  b.add(msg({ Subject: "a", To: "jo@partner.example" }, "1000000000000"));
+  b.add(msg({ Subject: "b", To: "jo@partner.example" }, "2000000000000"));
   const c = b.finish("q").correspondents[0];
   assertEquals(c.firstSeen, new Date(1000000000000).toISOString());
   assertEquals(c.lastSeen, new Date(2000000000000).toISOString());

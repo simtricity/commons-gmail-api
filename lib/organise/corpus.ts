@@ -24,8 +24,8 @@ export type SendKind = "genuine" | "auto-reply" | "list-post";
  * Detecting a post to a mailing list, from the sent copy alone.
  *
  * `List-Id` and `List-Post` are added by the list server on delivery, so an
- * outgoing copy never carries them and header inspection cannot work. Measured
- * on a real mailbox, every sent message to a list had only the ordinary
+ * outgoing copy never carries them and header inspection cannot work. In
+ * calibration on one mailbox, every sent message to a list had only the ordinary
  * `From`/`To`/`Subject`/`References` set.
  *
  * Two things do work. Gmail's own `list:<list-id>` search operator resolves list
@@ -192,8 +192,8 @@ export function listsOf(corpus: Corpus): Correspondent[] {
  * - Only the angle-bracket sender counts. See {@link senderOf}.
  * - An alias must have been used `minSends` times. A mailbox picks up the odd
  *   message that it did not send — a forward saved to Sent, mail imported from
- *   another provider, a message composed on someone else's machine. Measured on
- *   one 58,399-message mailbox, every genuine alias appeared at least three
+ *   another provider, a message composed on someone else's machine. In
+ *   calibration on one mailbox, every genuine alias appeared at least three
  *   times while every false one appeared exactly once, so a single sighting is
  *   no evidence at all.
  *

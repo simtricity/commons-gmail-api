@@ -93,15 +93,16 @@ export interface DecisionThresholds {
   };
   /**
    * A notification whose record lives elsewhere: delete, more readily the older it is.
-   * The loosest bar sits just above a tax return that scored 0.87.
+   * The loosest bar sits just above a high-stakes personal document that scored
+   * 0.87 in calibration.
    */
   elsewhere: {
     byAge: AgeStep[];
     needsReplyUnder: number;
     /**
      * A record this certain is never deleted on the word that its original lives
-     * elsewhere: "You just signed <engagement letter>" scored 0.92 record and
-     * 0.9 elsewhere, and was one template away from a must-keep tax return.
+     * elsewhere: in calibration a platform notification scored 0.92 record and
+     * 0.9 elsewhere, and was one template away from a must-keep document.
      */
     recordUnder: number;
   };
@@ -113,8 +114,9 @@ export interface DecisionThresholds {
     concernsUnder: number;
     /**
      * Below this, the personal and reply scores are ignored. Cold outreach is
-     * written to read as personal and to demand a reply; a recruiter scored 0.89
-     * personal. Having nothing to do with your operations is what gives it away.
+     * written to read as personal and to demand a reply, and scored up to 0.89
+     * personal in calibration. Having nothing to do with your operations is what
+     * gives it away.
      */
     concernsStrictUnder: number;
   };
@@ -418,7 +420,7 @@ export const ROUTES: Route[] = [
   {
     // Someone you have corresponded with over time, writing to you personally,
     // or plainly writing as a person. The model reads a working email with you
-    // on copy among colleagues as impersonal (one scored 0.06), but the corpus
+    // on copy among colleagues as impersonal (as low as 0.06 in calibration), but the corpus
     // knows every recipient: the sender's history is the better witness.
     name: "important-relationship",
     decide: (f, { thresholds: { important: t } }) => {

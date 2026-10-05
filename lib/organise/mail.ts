@@ -11,7 +11,7 @@ import { decodeBase64Url, header } from "../mime.ts";
 import type { Message, MessagePart } from "../types.ts";
 import type { MailState } from "./types.ts";
 
-/** "Alice Smith <a@b.com>" → "a@b.com". A bare address passes through. */
+/** "Alice Smith <a@b.example>" → "a@b.example". A bare address passes through. */
 export function addressOf(value: string): string {
   const m = value.match(/<([^>]+)>/);
   return (m ? m[1] : value).trim().toLowerCase();
@@ -60,7 +60,7 @@ function stripHtml(html: string): string {
 /**
  * Best available body text, quoted-reply lines removed and truncated.
  *
- * `maxChars` caps the head. Measured on a real mailbox, 60% of messages exceed
+ * `maxChars` caps the head. In calibration on one mailbox, most messages exceeded
  * 2,000 characters but classification answers did not move when the cap was
  * raised sixfold, because most questions are answered by the first screen. Raise
  * it only for questions about detail buried in the body, such as amounts, dates
@@ -109,8 +109,8 @@ const AUTO_SUBJECT =
  * Did this message leave the mailbox on its own?
  *
  * Matters when building a corpus of people you have genuinely corresponded
- * with. On a real mailbox 23% of sent messages were vacation auto-replies, and
- * they had added 92 domains that genuine correspondence never touched, including
+ * with. In calibration on one mailbox, vacation auto-replies were a large share of
+ * sent mail and had added many domains that genuine correspondence never touched, including
  * bounce addresses of newsletters and social networks. Counting them as contacts
  * makes an address whitelist rescue exactly the mail it should discard.
  */
