@@ -7,6 +7,7 @@
 import type { GmailClient } from "./client.ts";
 import { allHeaders, type AuthSummary, authSummary, type HeaderLine } from "./headers.ts";
 import { type MessageLinks, messageLinks } from "./links.ts";
+import { type Bounce, parseBounce } from "./bounce.ts";
 import { decodeBase64Url, header, summarize } from "./mime.ts";
 import type { Message, MessagePart } from "./types.ts";
 
@@ -129,6 +130,8 @@ export interface ReadMessage {
   headers?: HeaderLine[];
   /** Links in the body. Only with `links: true`. */
   links?: MessageLinks;
+  /** Present when the message is a delivery failure notice: who failed and why. */
+  bounce?: Bounce;
 }
 
 /** Turn one full-format message into a {@link ReadMessage}. */
@@ -156,7 +159,13 @@ export function readMessage(msg: Message, opts: ReadOptions = {}): ReadMessage {
     auth: authSummary(msg),
     ...(opts.headers ? { headers: allHeaders(msg) } : {}),
     ...(opts.links ? { links: messageLinks(msg) } : {}),
+    ...bounceField(msg),
   };
+}
+
+function bounceField(msg: Message): { bounce?: Bounce } {
+  const b = parseBounce(msg);
+  return b ? { bounce: b } : {};
 }
 
 /** Read every message in a thread (oldest first), or one message, as text. */

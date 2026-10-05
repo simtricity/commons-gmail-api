@@ -5,8 +5,8 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 
 ## [0.6.0] - 2026-10-04
 
-Reading a message now shows where it really came from and where its links go, so checking a
-suspected phishing email needs no custom code.
+Reading a message now shows where it really came from, where its links go, and, for a bounce,
+who failed and why. Checking a suspected phishing email or a failed send needs no custom code.
 
 ### Added
 
@@ -26,8 +26,20 @@ suspected phishing email needs no custom code.
 - `readMessage` / `readMessages` always include `auth`; `{ headers: true }` adds every header and
   `{ links: true }` adds the links.
 - `rawMessage(gmail, id)`: the message exactly as received (RFC 5322 bytes).
-- CLI: `read` prints a one-line DKIM/SPF/DMARC summary with flags; `read --headers` and
-  `read --links`; `raw --message <id> --out <dir>` saves `<id>.eml` (mode 0600) with its sha256.
+- **Bounces** (`lib/bounce.ts`): `parseBounce(msg)` reads RFC 3464 delivery status reports,
+  including Gmail's layout (per-message fields as part headers, per-recipient fields in a child
+  part) and relays that write free-text `Final-Recipient` or a bare `550` status, with a
+  plain-text fallback for notices that carry no report. Each recipient gets action, enhanced
+  status, severity, remote server, the server's own words and a `reason` (`no-such-user`,
+  `suppressed`, `mailbox-full`, `domain-not-found`, `policy`, `temporary`, `other`). The original
+  message's From/To/Cc/Subject/Message-ID come from the returned headers. `isBounce()`,
+  `bounceReason()`, `BOUNCE_QUERY`, and `findBounces(gmail, { recipient, days })` to search the
+  mailbox for a recipient's bounce history.
+- `readMessage` adds `bounce` when the message is a delivery failure notice.
+- CLI: `read` prints a one-line DKIM/SPF/DMARC summary with flags, plus the bounce details for a
+  bounce; `read --headers` and `read --links`; `raw --message <id> --out <dir>` saves
+  `<id>.eml` (mode 0600) with its sha256; `bounces [--recipient <addr>] [--days N]` lists
+  delivery failures grouped by recipient, oldest cause last.
 
 ## [0.5.0] - 2026-10-02
 

@@ -65,6 +65,15 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   dis=NONE)`), not as a property. `Return-Path` can appear twice (Google repeats it).
   Mail sent through a bulk provider passes DMARC through DKIM alignment while SPF passes for
   the provider's bounce domain, so a Return-Path on another domain is normal there.
+- Bounces (observed 2026-10-05): Gmail's delivery reports are `multipart/report;
+  report-type=delivery-status`. The `message/delivery-status` part has no body of its own: the
+  per-message fields (`Reporting-MTA`, `Arrival-Date`, `X-Original-Message-ID`) arrive as
+  **headers of its child** `text/plain` part, and the per-recipient fields as that child's body.
+  The original message's headers come back as a `text/rfc822-headers` part. When sending through a
+  "Send mail as" SMTP relay, any relay rejection is reported with the same "your 'Send mail as'
+  settings are misconfigured" text (`?p=CustomFromDenied`); the real cause is in
+  `Diagnostic-Code`. Some relays write `Final-Recipient` as free text and `Status` as a bare SMTP
+  code (`550`).
 - `format: "raw"` returns the whole RFC 5322 message base64url-encoded in `raw`, with no `payload`.
 - Drafts with attachments (probed 2026-10-02): the plain JSON `POST /drafts` with `message.raw`
   accepted 5, 10 and 20 MB random-byte attachments (~5 s, ~9 s, ~16 s), so the

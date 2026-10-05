@@ -9,5 +9,6 @@ export * from "./writes.ts";
 export * from "./body.ts";
 export * from "./headers.ts";
 export * from "./links.ts";
+export * from "./bounce.ts";
 export * from "./search.ts";
 export * from "./guarded.ts";

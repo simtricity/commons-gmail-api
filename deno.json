@@ -14,9 +14,9 @@
   },
   "tasks": {
     "cli": "deno run --allow-net --allow-env --allow-read --allow-write --allow-run=open,xdg-open cli/mod.ts",
-    "test": "deno test --allow-read --allow-write tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts",
+    "test": "deno test --allow-read --allow-write tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts",
     "test:live": "deno test --allow-net --allow-env --allow-read --allow-write tests/live-test.ts",
-    "check": "deno check mod.ts cli/mod.ts tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts tests/live-test.ts tests/live-write-test.ts examples/thread-attachments.ts",
+    "check": "deno check mod.ts cli/mod.ts tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts tests/live-test.ts tests/live-write-test.ts examples/thread-attachments.ts",
     "publish:dry": "deno publish --dry-run --allow-dirty",
     "test:live:write": "deno test --allow-net --allow-env --allow-read --allow-write tests/live-write-test.ts"
   },

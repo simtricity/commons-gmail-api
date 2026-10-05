@@ -9,6 +9,7 @@ import {
   fetchMessageAttachments,
   fetchThreadAttachments,
   FileTokenStore,
+  findBounces,
   GmailClient,
   GmailWriter,
   GuardedWriter,
@@ -385,6 +386,7 @@ export async function read(
       if (m.attachments.length) {
         console.log(`   📎 ${m.attachments.map((a) => a.filename).join(", ")}`);
       }
+      if (m.bounce) printBounce(m.bounce);
       if (m.headers) {
         console.log("\n   Headers:");
         for (const h of m.headers) console.log(`     ${h.name}: ${h.value}`);
@@ -403,6 +405,65 @@ export async function read(
       }
       console.log(`\n${m.text}\n`);
       if (m.truncatedChars) console.log("   (raise --max-chars to see the rest)\n");
+    }
+  });
+}
+
+function printBounce(b: NonNullable<ReadMessage["bounce"]>): void {
+  console.log(`\n   Bounce (${b.kind}${b.reportingMta ? `, reported by ${b.reportingMta}` : ""}):`);
+  for (const r of b.recipients) {
+    console.log(
+      `     ✗ ${r.address}  ${r.action}${r.status ? ` ${r.status}` : ""}  → ${r.reason}${
+        r.remoteMta ? `  via ${r.remoteMta}` : ""
+      }`,
+    );
+    if (r.diagnostic) console.log(`       ${r.diagnostic}`);
+  }
+  const o = b.original;
+  if (o.subject || o.from) {
+    console.log(
+      `     original: ${o.subject ?? "(no subject)"}  from ${o.from ?? "?"}  ${o.date ?? ""}`,
+    );
+    if (o.to) console.log(`       to ${o.to}${o.cc ? `  cc ${o.cc}` : ""}`);
+  }
+}
+
+export async function bounces(
+  ctx: Context,
+  opts: { recipient?: string; days?: number; max?: number },
+): Promise<void> {
+  const list = await findBounces(await client(ctx), opts);
+  // Group by recipient: the first bounce of an address usually explains every later one.
+  const byRecipient = new Map<
+    string,
+    { date: string; reason: string; status?: string; diagnostic?: string; bounceId: string }[]
+  >();
+  for (const b of list) {
+    for (const r of b.recipients.filter((x) => x.action !== "delivered")) {
+      const rows = byRecipient.get(r.address) ?? [];
+      rows.push({
+        date: b.date,
+        reason: r.reason,
+        status: r.status,
+        diagnostic: r.diagnostic,
+        bounceId: b.bounceId,
+      });
+      byRecipient.set(r.address, rows);
+    }
+  }
+  const recipients = [...byRecipient].map(([address, history]) => ({
+    address,
+    count: history.length,
+    history,
+  }));
+  out(ctx, { bounces: list, recipients }, () => {
+    if (!list.length) console.log("(no bounces found)");
+    for (const r of recipients) {
+      console.log(`${r.address}  ${r.count} bounce(s)`);
+      for (const h of r.history) {
+        console.log(`  ${h.date}  ${h.reason}${h.status ? ` ${h.status}` : ""}  [${h.bounceId}]`);
+        if (h.diagnostic) console.log(`    ${h.diagnostic.slice(0, 200)}`);
+      }
     }
   });
 }

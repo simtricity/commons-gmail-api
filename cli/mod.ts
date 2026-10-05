@@ -19,6 +19,8 @@
  *                [--headers] every header · [--links] body links, hosts, text/target mismatches.
  *                Always shows a DKIM/SPF/DMARC line with phishing flags.
  *   raw          --message <id> --out <dir>      Save the message as received, <id>.eml (0600)
+ *   bounces      [--recipient <addr>] [--days N] [--max N]   Delivery failures, grouped by
+ *                recipient, with status, reason and the remote server's words (default 90 days)
  *   attachments list  --thread <id> | --message <id>
  *   attachments fetch --thread <id> | --message <id> --out <dir>
  *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
@@ -68,6 +70,8 @@ const args = parseArgs(Deno.args, {
     "reply-to",
     "max-chars",
     "body-file",
+    "recipient",
+    "days",
   ],
   collect: ["include", "filename", "to", "cc", "attach"],
   boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads", "headers", "links"],
@@ -95,6 +99,7 @@ Commands:
   read         --thread <id> | --message <id> [--max-chars N]   Headers + body text + auth line
                [--headers] every header   [--links] body links, host counts, text/target mismatches
   raw          --message <id> --out <dir>     Save the message as received (<id>.eml) for forensics
+  bounces      [--recipient <addr>] [--days N] [--max N]   Delivery failures by recipient (90 days)
   attachments list  --thread <id> | --message <id>
   attachments fetch --thread <id> | --message <id> --out <dir>
                [--include <glob>]... [--filename <exact>]... [--inline]
@@ -174,6 +179,13 @@ try {
         maxChars: args["max-chars"] ? Number(args["max-chars"]) : 8000,
         headers: args.headers,
         links: args.links,
+      });
+      break;
+    case "bounces":
+      await commands.bounces(ctx, {
+        recipient: args.recipient,
+        days: args.days ? Number(args.days) : undefined,
+        max: args.max ? Number(args.max) : undefined,
       });
       break;
     case "raw":

@@ -72,6 +72,18 @@ sender cannot fake it with a header of their own. Empty `flags` means DKIM align
 DMARC passed and Reply-To stays on the sender's domain. It does not prove the sender is honest,
 only that the mail is really from the domain it claims.
 
+## Why did my email bounce? (0.6.0)
+
+```bash
+deno task cli read --message <bounce-id>                         # who failed, status, reason, original
+deno task cli bounces --recipient someone@example.com --days 365  # that address's bounce history
+```
+
+A relay that says "not sending to previously bounced email" (`reason: "suppressed"`) is
+refusing because an earlier message to the same address failed; `bounces --recipient` finds
+that first failure and the remote server's reason. Gmail words any rejection by a "Send mail
+as" relay as a misconfigured alias, so read the relay's own diagnostic rather than Gmail's text.
+
 ## Writes: labels and drafts (0.3.0, opt-in)
 
 Writing needs a second grant and a separate import. The read-only credential is never widened.
