@@ -35,9 +35,26 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 - `TRIAGE_DEFAULT_QUESTIONS`: generic wording for the eight triage questions, so triage runs
   with no question file. One phrase in `carries_private_data` reads "data exports" rather
   than an industry-specific term; wording is overridable per question.
+- `choiceScheme()`: a declarative scheme over one Choice question; the winning option is the
+  category, sender rulings decide first, and an unanswered message goes to an unlabelled option.
+- `parseProfile()` and `ProfileError`: a JSON profile naming the schemes to run. Every field has a
+  default and an absent `schemes` means generic triage, so `{}` is a working profile. Label
+  prefixes that nest and questions defined two ways are refused.
+- `questionsFor()`, `questionHash()` and `pendingQuestions()`: all schemes' questions in one model
+  call per message, and answers stored with the hash they were asked under, so rewording one
+  question re-asks only it.
+- Golden sets per scheme: `parseGolden(raw, categories?)` fills in each case's scheme, `score()`
+  scores one scheme, and `withRuling()` / `withSenderRuling()` record rulings without mutating.
+- `relabelPlan()`: decisions into batched label changes, each adding one label and removing the
+  scheme's others for that year in the same call.
+- `SystemOneJudge` behind a `Judge` interface: a client for TypeSafe's System One endpoint with an
+  injected key and `fetch`, its own retries for 429, 5xx and network failures, and
+  `SystemOneError` (status, body, reason) whose message never carries the key or the body.
 
 ### Changed
 
+- `./organise` golden-set refusals are `ProfileError` (a subclass of `Error`), and `GoldenCase`
+  holds categories as strings with an optional `scheme`.
 - `WriteGuardError.code` adds `"bad-scope"` and `"outside-scope"`. A consumer that switches
   exhaustively over the codes will need the two new cases.
 - `labelChange` and its 25-id cap are unchanged.

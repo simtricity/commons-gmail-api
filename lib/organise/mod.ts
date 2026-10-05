@@ -9,6 +9,7 @@ export * from "./choice.ts";
 export * from "./corpus.ts";
 export * from "./envelope.ts";
 export * from "./golden.ts";
+export * from "./judge.ts";
 export * from "./mail.ts";
 export * from "./message.ts";
 export * from "./policy.ts";
