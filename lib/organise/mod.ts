@@ -14,6 +14,7 @@ export * from "./message.ts";
 export * from "./policy.ts";
 export * from "./profile.ts";
 export * from "./questions.ts";
+export * from "./relabel.ts";
 export * from "./relationships.ts";
 export * from "./rulings.ts";
 export * from "./sample.ts";
