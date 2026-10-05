@@ -6,7 +6,8 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { Organiser, type OrganiserIO } from "../../organise.ts";
 import { ProfileError } from "../../lib/organise/scheme.ts";
 import { SCOPE_READONLY } from "../../mod.ts";
-import { FakeMailbox } from "./contract/fakes.ts";
+import { FakeJev, FakeMailbox } from "./contract/fakes.ts";
+import { SystemOneJudge } from "../../lib/organise/judge.ts";
 import { FLAKY, NOW, RECEIVED, SENT } from "./contract/fixtures.ts";
 
 async function setup(files: Record<string, unknown> = {}) {
@@ -148,5 +149,76 @@ Deno.test("sample: a query sample, and a redraw clears derived files but never a
     Error,
     "has been applied",
   );
+  await w.done();
+});
+
+const JUDGE_PROFILE = {
+  pricePerMTok: 0.05,
+  context: { about_me: "A synthetic account holder." },
+  schemes: {
+    triage: { kind: "triage" },
+    project: {
+      kind: "choice",
+      question: {
+        id: "project",
+        instructions: "Which project?",
+        options: { alpha: "", beta: "", none: "" },
+      },
+      labels: { pattern: "project/{category}" },
+      unlabelled: ["none"],
+    },
+  },
+};
+
+async function judged() {
+  const w = await setup({ "profile.json": JUDGE_PROFILE });
+  const jev = new FakeJev();
+  w.io.judge = new SystemOneJudge({ apiKey: "k", fetch: jev.fetch, retryBaseMs: 1 });
+  const org = await Organiser.open(w.dir, w.io);
+  await org.capture({ source: "sent" });
+  await org.sample({ run: "r", year: 2020, size: 100, singleMessage: true });
+  await org.fetch({ run: "r" });
+  return { w, jev, org };
+}
+
+Deno.test("judge: one call per message with every scheme's questions, then nothing pending", async () => {
+  const { w, jev, org } = await judged();
+  const j = await org.judge({ run: "r" });
+  assertEquals(jev.calls.length, j.messages);
+  assertEquals(jev.calls[0].questions.length, 9);
+  assertEquals(jev.calls[0].context, JUDGE_PROFILE.context);
+  assertEquals([j.model, j.failures], ["jev-test-1", 0]);
+  const again = await org.judge({ run: "r" });
+  assertEquals([again.messages, again.questions], [0, []]);
+  assertEquals(jev.calls.length, j.messages, "nothing asked twice");
+  const forced = await org.judge({ run: "r", schemes: ["project"], force: true });
+  assertEquals(forced.questions, ["project"]);
+  await w.done();
+});
+
+Deno.test("judge: every asking pass is recorded and summed; a silent pass is not", async () => {
+  const { w, org } = await judged();
+  const first = await org.judge({ run: "r", schemes: ["triage"] });
+  await org.judge({ run: "r", schemes: ["triage"] });
+  const second = await org.judge({ run: "r" });
+  assertEquals(second.questions, ["project"], "only the scheme not yet asked");
+  const m = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/r/manifest.json`));
+  assertEquals(m.judge.passes.length, 2);
+  assertEquals(m.judge.inputTokens, first.inputTokens + second.inputTokens);
+  assertEquals(second.totalInputTokens, m.judge.inputTokens);
+  assertEquals(m.judge.costUsd, Number(((m.judge.inputTokens / 1e6) * 0.05).toFixed(6)));
+  const answers = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/r/answers.json`));
+  assertEquals(
+    Object.keys(answers[0].asked).length,
+    9,
+    "each answer keeps the hash it was asked under",
+  );
+  await w.done();
+});
+
+Deno.test("judge: without a model it refuses before reading anything", async () => {
+  const w = await setup();
+  const org = await Organiser.open(w.dir, w.io);
+  await assertRejects(() => org.judge({ run: "r" }), TypeError, "io.judge");
   await w.done();
 });

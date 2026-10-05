@@ -10,11 +10,13 @@ import { ProfileError, type SenderRulings } from "../scheme.ts";
 import { capture, corpus } from "./capture.ts";
 import type { StageContext } from "./context.ts";
 import { fetchRun, sample } from "./fetch.ts";
+import { judge } from "./judge.ts";
 import { layout, readJsonOr } from "./store.ts";
 import type {
   CaptureSummary,
   CorpusSummary,
   FetchSummary,
+  JudgeSummary,
   Manifest,
   OrganiserIO,
   SampleOptions,
@@ -105,5 +107,12 @@ export class Organiser {
   /** Full reads, paced; single-message samples settled by one listing pass over the mailbox. Resumable. */
   fetch(o: { run: string }): Promise<FetchSummary> {
     return fetchRun(this.#ctx, o);
+  }
+
+  /** One model call per message for every pending question of the chosen schemes (default all). */
+  judge(
+    o: { run: string; schemes?: string[]; force?: boolean; concurrency?: number },
+  ): Promise<JudgeSummary> {
+    return judge(this.#ctx, o);
   }
 }
