@@ -27,7 +27,7 @@ import {
   TRIAGE_EXPECTED,
   TRIAGE_IDS,
   TRIAGE_SENDERS,
-} from "./contract/fixtures.ts";
+} from "./fixtures.ts";
 
 const noul = (v: number) => ({ type: "noul" as const, noul: v });
 

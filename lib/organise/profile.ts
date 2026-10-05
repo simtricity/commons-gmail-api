@@ -54,8 +54,11 @@ export interface ProfileFile {
   relationships?: RelationshipOptions;
   /** USD per million input tokens, for cost reporting only. Absent: tokens are reported, cost is not. */
   pricePerMTok?: number;
-  /** The schemes to run, by id. Absent: one generic triage scheme. */
-  schemes?: Record<string, SchemeSpec>;
+  /**
+   * The schemes to run, by id. A profile file may leave it out:
+   * {@link parseProfile} reads an absent `schemes` as one generic triage scheme.
+   */
+  schemes: Record<string, SchemeSpec>;
 }
 
 /** A validated profile, its schemes built. */
@@ -91,7 +94,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
  */
 export function parseProfile(raw: unknown, senders: Record<string, SenderRulings> = {}): Profile {
   if (!isRecord(raw)) throw new ProfileError("a profile must be a JSON object");
-  const file = raw as ProfileFile;
+  const file = raw as Partial<ProfileFile>;
 
   // fallback: a stranger's empty profile gets generic triage.
   const specs = file.schemes === undefined ? { triage: { kind: "triage" as const } } : file.schemes;

@@ -15,9 +15,9 @@ import {
   SCOPE_READONLY,
   ScopedRelabelError,
 } from "../../mod.ts";
-import { FakeJev, FakeMailbox } from "./contract/fakes.ts";
+import { FakeJev, FakeMailbox } from "./fakes.ts";
 import { SystemOneJudge } from "../../lib/organise/judge.ts";
-import { FLAKY, NOW, RECEIVED, SENT } from "./contract/fixtures.ts";
+import { FLAKY, NOW, RECEIVED, SENT } from "./fixtures.ts";
 
 async function setup(files: Record<string, unknown> = {}) {
   const dir = await Deno.makeTempDir({ prefix: "organiser-test-" });

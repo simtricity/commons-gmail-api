@@ -32,6 +32,12 @@
   },
   "fmt": {
     "lineWidth": 100,
-    "exclude": ["tests/organise/contract/"]
+    "exclude": [
+      "tests/organise/fakes.ts",
+      "tests/organise/fakes_test.ts",
+      "tests/organise/fixtures.ts",
+      "tests/organise/organise_contract_test.ts",
+      "tests/organise/triage-questions.default.json"
+    ]
   }
 }

@@ -1,7 +1,7 @@
 import { assertEquals } from "@std/assert";
 import type { Message } from "../../mod.ts";
 import { toOrganiseMessage } from "../../lib/organise/message.ts";
-import { gmailMessage, RECEIVED } from "./contract/fixtures.ts";
+import { gmailMessage, RECEIVED } from "./fixtures.ts";
 
 const fixture = (id: string) => gmailMessage(RECEIVED.find((m) => m.id === id)!) as Message;
 

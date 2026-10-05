@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { SYSTEM_ONE_ENDPOINT, SystemOneError, SystemOneJudge } from "../../lib/organise/judge.ts";
-import { FakeJev } from "./contract/fakes.ts";
+import { FakeJev } from "./fakes.ts";
 
 const KEY = "sk-planted-secret-4f1c";
 const SUBJECT = "Planted private subject 9d2e";
