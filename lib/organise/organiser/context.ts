@@ -31,6 +31,11 @@ export const isoNow = (ctx: StageContext): string => new Date(nowOf(ctx)).toISOS
 /** A progress line, if the caller wants them. */
 export const say = (ctx: StageContext, line: string): void => ctx.io.log?.(line);
 
+/** Each scheme's categories, by scheme id, for checking golden cases. */
+export function categoriesOf(profile: Profile): Record<string, readonly string[]> {
+  return Object.fromEntries(profile.schemes.map((s) => [s.id, s.categories]));
+}
+
 /** The scheme by id, or a ProfileError naming the ones there are. */
 export function schemeOf(ctx: StageContext, id: string): Scheme {
   const s = ctx.profile.schemes.find((x) => x.id === id);

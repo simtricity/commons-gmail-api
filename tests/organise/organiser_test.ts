@@ -455,3 +455,69 @@ Deno.test("apply: a group refused part way logs what landed, then rethrows (R2, 
   await Deno.remove(guardLog);
   await w.done();
 });
+
+Deno.test("rule: golden and sender rulings written, replaced, re-decided; refusals write nothing", async () => {
+  const { w, org } = await judged();
+  await org.judge({ run: "r" });
+  await org.decide({ run: "r", now: NOW });
+  const r = await org.rule({
+    scheme: "triage",
+    id: "r11",
+    is: "important",
+    note: "synthetic",
+    sender: true,
+    run: "r",
+  });
+  assertEquals(r.case, { id: "r11", scheme: "triage", expect: "important", note: "synthetic" });
+  assertEquals(r.sender, { address: "person@neutral.test", category: "important" });
+  assertEquals([r.decision?.category, r.decision?.route], ["important", "policy"]);
+  assertEquals(org.golden.length, 1);
+  assertEquals(org.profile.schemes[0].categories.length, 4);
+
+  const golden = `${w.dir}/rulings/golden.json`;
+  const senders = `${w.dir}/rulings/senders.json`;
+  assertEquals(JSON.parse(await Deno.readTextFile(senders)), {
+    triage: { important: { "person@neutral.test": "synthetic" } },
+  });
+  assertEquals(await mode(golden), 0o600);
+
+  // Without a run, the sender comes from the newest run that decided the message.
+  const moved = await org.rule({ scheme: "triage", id: "r11", is: "keep", sender: true });
+  assertEquals([moved.sender?.category, moved.decision], ["keep", undefined]);
+  assertEquals(JSON.parse(await Deno.readTextFile(senders)), {
+    triage: { keep: { "person@neutral.test": "" } },
+  });
+  assertEquals(
+    JSON.parse(await Deno.readTextFile(golden)).cases.map((c: { expect: string }) => c.expect),
+    ["keep"],
+    "a re-ruling replaces",
+  );
+
+  const project = await org.rule({ scheme: "project", id: "r2", is: ["alpha", "beta"] });
+  assertEquals(project.case.scheme, "project");
+  assertEquals(org.golden.length, 2);
+
+  const before = [await Deno.readTextFile(golden), await Deno.readTextFile(senders)];
+  for (
+    const bad of [
+      { scheme: "triage", id: "r11", is: ["keep", "defer"], sender: true },
+      { scheme: "triage", id: "r11", is: "archive" },
+      { scheme: "project", id: "r2", is: "gamma" },
+      { scheme: "nosuch", id: "r2", is: "alpha" },
+    ]
+  ) {
+    await assertRejects(() => org.rule(bad), ProfileError);
+  }
+  await assertRejects(
+    () => org.rule({ scheme: "triage", id: "nope", is: "keep", sender: true }),
+    Error,
+    "sender is unknown",
+  );
+  assertEquals(
+    [await Deno.readTextFile(golden), await Deno.readTextFile(senders)],
+    before,
+    "a refused ruling leaves both files as they were",
+  );
+  assertEquals((await Organiser.open(w.dir, w.io)).golden.length, 2, "reopened, the rulings hold");
+  await w.done();
+});

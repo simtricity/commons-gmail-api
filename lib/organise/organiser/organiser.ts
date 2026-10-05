@@ -9,11 +9,12 @@ import type { OrganiseMessage } from "../message.ts";
 import { parseProfile, type Profile } from "../profile.ts";
 import { ProfileError, type SenderRulings } from "../scheme.ts";
 import { capture, corpus } from "./capture.ts";
-import type { StageContext } from "./context.ts";
+import { categoriesOf, type StageContext } from "./context.ts";
 import { fetchRun, sample } from "./fetch.ts";
 import { judge } from "./judge.ts";
 import { decide, explain, find, runs, score } from "./decide.ts";
 import { apply, reconcile } from "./labels.ts";
+import { rule } from "./rule.ts";
 import { layout, readJsonOr } from "./store.ts";
 import type {
   ApplySummary,
@@ -26,13 +27,10 @@ import type {
   Manifest,
   OrganiserIO,
   ReconcileResult,
+  RuleOptions,
+  RuleResult,
   SampleOptions,
 } from "./types.ts";
-
-/** Each scheme's categories, by scheme id, for checking golden cases. */
-function categoriesOf(profile: Profile): Record<string, readonly string[]> {
-  return Object.fromEntries(profile.schemes.map((s) => [s.id, s.categories]));
-}
 
 /**
  * The pipeline over one data directory:
@@ -157,6 +155,14 @@ export class Organiser {
   /** Run messages whose subject or From contains `text`, case-insensitively. */
   find(o: { run: string; text: string }): Promise<OrganiseMessage[]> {
     return find(this.#ctx, o);
+  }
+
+  /**
+   * Record a golden case (and, with `sender`, a sender ruling), write the
+   * rulings files and rebuild the schemes; with `run`, re-decide it.
+   */
+  rule(o: RuleOptions): Promise<RuleResult> {
+    return rule(this.#ctx, o);
   }
 
   /** Every run's manifest, newest first. */
