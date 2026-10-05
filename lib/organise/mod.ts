@@ -5,6 +5,7 @@
  */
 
 export * from "./capture.ts";
+export * from "./choice.ts";
 export * from "./corpus.ts";
 export * from "./envelope.ts";
 export * from "./golden.ts";
