@@ -35,6 +35,9 @@
  *                [--body-file <path>] [--attach <path>]...   (attachments total ≤ 25 MB)
  *                Creates a draft only. Applied writes append to ~/.simt/gmail-api/writes.log
  *
+ *   organise <verb> ...                           Sort a mailbox into labels with a decision
+ *                model; labels only. `organise --help` lists the verbs and exit codes.
+ *
  * Global options:
  *   --account <email>   Mailbox to act as (default: the store's default)
  *   --json              Machine-readable output
@@ -50,6 +53,7 @@
 
 import { parseArgs } from "@std/cli/parse-args";
 import * as commands from "./commands.ts";
+import { envDeps, runOrganise } from "./organise.ts";
 import { GmailApiError, NotSignedInError, OAuthError } from "../lib/mod.ts";
 
 const args = parseArgs(Deno.args, {
@@ -80,6 +84,12 @@ const args = parseArgs(Deno.args, {
 
 const [command, sub] = args._.map(String);
 
+// organise has its own verbs, options and exit codes; it parses the arguments itself.
+if (command === "organise") {
+  const at = Deno.args.indexOf("organise");
+  Deno.exit(await runOrganise([...Deno.args.slice(0, at), ...Deno.args.slice(at + 1)], envDeps));
+}
+
 function usage(): void {
   console.log(`gmail-api — read-only Gmail from the terminal
 
@@ -106,6 +116,7 @@ Commands:
                [--max-bytes N] [--skip-existing [dir]] [--dry-run]
                --skip-existing: don't re-download files already in dir (default --out),
                matched on name + size, confirmed against a prior manifest.json
+  organise     <verb> [options]               Sort a mailbox into labels; organise --help
 
 Options:
   --account <email>   Mailbox to act as (default: store default)
