@@ -128,6 +128,18 @@ await g.labelChange({ name: "organiser/2026/review", ids, kind: "thread" });    
 await g.labelChange({ name: "organiser/2026/review", ids, kind: "thread", apply: true }); // writes and logs
 ```
 
+A bulk job that owns a label prefix (a classifier, say) uses the scoped methods instead. There is
+no id cap, but every label it adds or removes must sit under its prefix, system labels are refused,
+and the log records a hash of the ids rather than the ids:
+
+```ts
+await g.createScopedLabel("sorter/", "sorter/2026/keep");            // parents too; idempotent
+const plan = await g.scopedRelabel({                                  // dry run: returns the plan
+  prefix: "sorter/", add: "sorter/2026/keep", remove: ["sorter/2026/later"], ids,
+});
+await g.scopedRelabel({ ...plan, add: "sorter/2026/keep", remove: ["sorter/2026/later"], apply: true });
+```
+
 Reading as text: `readMessages(gmail, { threadId })` and `bodyText(msg, { maxChars })`; grouped
 search: `searchThreads(gmail, q)`. The library never refuses an unbounded query on its own;
 `requireDateBound(q)` is there for callers that want that rule.

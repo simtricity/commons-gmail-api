@@ -3,6 +3,29 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.7.0] - unreleased
+
+### Added
+
+- **Scoped bulk relabels on `GuardedWriter`**: `createScopedLabel(prefix, name)`,
+  `planScopedRelabel(req)` and `scopedRelabel({ prefix, add, remove, ids, apply })` for bulk
+  jobs that own a label prefix. No id cap; applied in chunks of `BATCH_MODIFY_MAX`. Every label
+  added or removed must start with the prefix. Refusals, all before any request, in this order:
+  `bad-scope` (prefix empty or not ending in `/`), `outside-scope`, `system-label`,
+  `no-such-label` (`add` missing). Dry run unless `apply`. `remove` names that do not exist are
+  skipped, and `add` is never also removed. Nothing to do is a no-op with no request and no
+  log line.
+- An applied scoped relabel appends one `label.relabel` line to the write log with `prefix`,
+  `add`, `remove`, `count` and `idsSha256` (sha256 of the sorted ids joined by a newline) in
+  place of the ids. `idsSha256(ids)` is exported so a caller can match its own id list to the log.
+- `ScopedRelabelRequest`, `ScopedRelabelPlan` and `ScopedRelabelResult` types.
+
+### Changed
+
+- `WriteGuardError.code` adds `"bad-scope"` and `"outside-scope"`. A consumer that switches
+  exhaustively over the codes will need the two new cases.
+- `labelChange` and its 25-id cap are unchanged.
+
 ## [0.6.0] - 2026-10-04
 
 Reading a message now shows where it really came from, where its links go, and, for a bounce,
