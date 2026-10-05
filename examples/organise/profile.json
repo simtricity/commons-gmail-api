@@ -1,0 +1,6 @@
+{
+  "_comment": "Generic triage, nothing else. An empty object {} does the same. Copy to <data dir>/profile.json to change it.",
+  "schemes": {
+    "triage": { "kind": "triage" }
+  }
+}

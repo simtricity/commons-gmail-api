@@ -151,6 +151,58 @@ unless `--apply`, 25 ids per call, system labels refused outright, and every app
 JSON line to `~/.simt/gmail-api/writes.log`. Vendor quirks (parents not auto-created, 409 on
 duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`.
 
+## Organising a mailbox (0.7.0)
+
+`@simtricity-commons/gmail-api/organise` sorts received mail into labels. Each message is decided
+by fixed rules over its envelope (who sent it, through what, whether you have written to them)
+together with a decision model's answers to plain-language questions about it. The default scheme
+is a triage into `delete`, `defer`, `keep` and `important`, labelled `organiser/<year>/<category>`;
+a profile can add schemes of your own, such as one label per project.
+
+It only ever adds and removes labels inside a scheme's own prefix. Nothing is sent, trashed or
+deleted, and `apply` is a dry run unless you pass `--apply`.
+
+> The decision model is TypeSafe's System One API, used with your own key. Unofficial. Not
+> affiliated with or endorsed by TypeSafe. Any other model can be plugged in through the `Judge`
+> interface.
+
+From a fresh `login` (the read grant is enough) to a dry run:
+
+```bash
+export TYPESAFE_API_KEY=…                           # or any secrets manager that injects it
+deno task cli organise whoami                       # grants, model key, profile, data directory
+deno task cli organise capture --source sent        # sent-mail metadata: who you write to
+deno task cli organise corpus
+deno task cli organise sample --run first --query newer_than:30d --size 50
+deno task cli organise fetch  --run first
+deno task cli organise judge  --run first           # one model call per message
+deno task cli organise decide --run first
+deno task cli organise apply  --run first           # dry run: the labels it would create and move
+```
+
+Then:
+
+- `explain --run first --message <id>` shows the facts and answers behind one decision, and
+  `find --run first --find <text>` locates a message by subject or sender.
+- `rule --message <id> --is keep [--never delete] [--sender]` records your verdict. Rulings form a
+  golden set that `score --run first` checks every later decide against; `--sender` also rules
+  everything from that sender.
+- `apply --run first --apply` writes the labels. It needs the write grant from
+  `deno task cli login --write`, and every applied change is logged, ids included, in the run's
+  `apply.<scheme>.log`, so it can be undone.
+- `reconcile --run first` compares the labels in Gmail with the decisions, and catches a label
+  moved by hand.
+
+Every verb takes `--json`, and exits 0 when done, 1 on a usage error, 2 when a grant or the model
+key is missing, 3 when `score` finds a critical failure, 4 when `reconcile` finds a mismatch, and
+5 when a stage finished with failures (re-run it to resume). `organise --help` lists every option.
+
+State lives in `~/.simt/gmail-api/organise` (`GMAIL_ORGANISE_DATA` to move it): the profile,
+rulings, sent-mail capture and one directory per run. With no `profile.json` you get the default
+triage; `examples/organise/profile.json` is a starting point. Gmail reads are paced at 4 a second,
+within the per-user quota. `examples/organise-triage.ts` drives the same steps from code; the
+library reads no environment, so every path, client and key is passed in.
+
 ## Setup
 
 1. Google Cloud Console → APIs & Services → Credentials → **OAuth client ID, type Desktop app** →
