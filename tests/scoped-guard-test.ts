@@ -30,7 +30,7 @@ const BASE: Label[] = [
   { id: "S1", name: "sorter/sys", type: "system" },
 ] as Label[];
 
-async function setup() {
+async function setup(opts: { failModifyAt?: number } = {}) {
   const dir = await Deno.makeTempDir();
   const logPath = `${dir}/writes.log`;
   let labels = [...BASE];
@@ -58,7 +58,13 @@ async function setup() {
       labels = [...labels, l];
       return json(l);
     }
-    if (c.path === "/messages/batchModify") return new Response(null, { status: 204 });
+    if (c.path === "/messages/batchModify") {
+      const n = calls.filter((x) => x.path === "/messages/batchModify").length;
+      if (n === opts.failModifyAt) {
+        return json({ error: { code: 403, errors: [{ reason: "rateLimitExceeded" }] } }, 403);
+      }
+      return new Response(null, { status: 204 });
+    }
     if (c.path === "/profile") return json({ emailAddress: "user@example.test" });
     return json({});
   };
@@ -222,4 +228,23 @@ Deno.test("labelChange keeps its 25-id cap", async () => {
   const ids = Array.from({ length: 26 }, (_, i) => `m${i}`);
   assertEquals(await code(() => g.labelChange({ name: "receipts", ids })), "too-many-ids");
   assert((await g.labelChange({ name: "receipts", ids: ids.slice(0, 25) })).dryRun);
+});
+
+Deno.test("a chunk that fails part-way still logs what landed, then rethrows", async () => {
+  const { g, lines, modifies } = await setup({ failModifyAt: 2 });
+  const ids = Array.from({ length: 2500 }, (_, i) => `m${i}`);
+  const req = { prefix: "sorter/", add: "sorter/2020/keep", remove: [], ids };
+  await g.scopedRelabel(req); // a dry run first: no line
+  assertEquals(await lines(), []);
+  const e = await assertRejects(() => g.scopedRelabel({ ...req, apply: true }));
+  assertEquals((e as { status?: number }).status, 403, "the Gmail error is rethrown");
+  assertEquals(modifies().length, 2, "chunk 3 is never attempted");
+  const relabels = (await lines()).filter((l) => l.op === "label.relabel");
+  assertEquals(relabels.length, 1);
+  const l = relabels[0];
+  assertEquals([l.partial, l.callsDone, l.count], [true, 1, 2500]);
+  assertEquals(l.error, { name: "GmailApiError", status: 403 });
+  assertEquals(l.idsSha256, await idsSha256(ids), "hash of the whole planned set");
+  assertEquals(l.ids, undefined);
+  assert(!JSON.stringify(l).includes("rateLimitExceeded"), "no error body in the log");
 });

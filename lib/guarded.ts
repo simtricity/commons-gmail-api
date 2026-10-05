@@ -16,7 +16,7 @@
 
 import { sha256Hex } from "./mime.ts";
 import type { Draft, DraftInput, Label } from "./types.ts";
-import type { GmailWriter } from "./writes.ts";
+import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
 /** Default per-call id cap. */
 export const DEFAULT_MAX_IDS = 25;
@@ -321,8 +321,10 @@ export class GuardedWriter {
   /**
    * Plan, then apply only when `apply` is true. The default is a dry run. Applied in chunks of
    * `BATCH_MODIFY_MAX`; one log line per call, with `idsSha256` (sha256 of the sorted ids
-   * joined by `\n`) in place of the ids. Nothing to add, nothing to remove or no ids is a no-op:
-   * no request, no log line.
+   * joined by `\n`) in place of the ids. If a chunk fails, the line is still written, with
+   * `partial: true`, `callsDone` (chunks applied, in `ids` order) and `error` (class name and
+   * HTTP status only), and the error is rethrown. Nothing to add, nothing to remove or no ids is
+   * a no-op: no request, no log line.
    */
   async scopedRelabel(
     req: ScopedRelabelRequest & { apply?: boolean },
@@ -332,18 +334,41 @@ export class GuardedWriter {
     if (!plan.count || (!plan.add && !plan.remove.length)) {
       return { ...plan, applied: true, calls: 0 };
     }
-    const calls = await this.writer.batchModifyMessages(plan.ids, {
+    const change = {
       ...(plan.add ? { addLabelIds: [plan.add.id] } : {}),
       removeLabelIds: plan.remove.map((l) => l.id),
-    });
-    await this.record({
+    };
+    const line = {
       op: plan.op,
       prefix: plan.prefix,
       add: plan.add ?? null,
       remove: plan.remove,
       count: plan.count,
       idsSha256: await idsSha256(plan.ids),
-    });
+    };
+    // Chunked here, one request per chunk, so a failure part-way still knows how many landed.
+    let calls = 0;
+    try {
+      for (let i = 0; i < plan.ids.length; i += BATCH_MODIFY_MAX) {
+        await this.writer.batchModifyMessages(plan.ids.slice(i, i + BATCH_MODIFY_MAX), change);
+        calls++;
+      }
+    } catch (e) {
+      // Chunks 1..calls are applied in Gmail; record them before rethrowing. Ids follow
+      // plan.ids order, so the first calls x BATCH_MODIFY_MAX ids are the ones that landed.
+      const status = (e as { status?: unknown }).status;
+      await this.record({
+        ...line,
+        partial: true,
+        callsDone: calls,
+        error: {
+          name: e instanceof Error ? e.name : typeof e,
+          ...(typeof status === "number" ? { status } : {}),
+        },
+      });
+      throw e;
+    }
+    await this.record(line);
     return { ...plan, applied: true, calls };
   }
 }

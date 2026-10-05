@@ -18,6 +18,9 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 - An applied scoped relabel appends one `label.relabel` line to the write log with `prefix`,
   `add`, `remove`, `count` and `idsSha256` (sha256 of the sorted ids joined by a newline) in
   place of the ids. `idsSha256(ids)` is exported so a caller can match its own id list to the log.
+- If a chunk fails part-way (a quota refusal, a dropped connection), the line is still written
+  before the error is rethrown, with `partial: true`, `callsDone` (chunks applied, in `ids`
+  order) and `error` (class name and HTTP status, never the body).
 - `ScopedRelabelRequest`, `ScopedRelabelPlan` and `ScopedRelabelResult` types.
 
 ### Changed
