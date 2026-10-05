@@ -58,7 +58,10 @@ Deno.test("a Google Group post is attributed to its author, not the group", () =
 });
 
 Deno.test("sender identity ignores addresses inside a display name", () => {
-  assertEquals(senderIdentity(env({ from: `"no-reply@vendor.test" <real@sender.test>` })), "real@sender.test");
+  assertEquals(
+    senderIdentity(env({ from: `"no-reply@vendor.test" <real@sender.test>` })),
+    "real@sender.test",
+  );
 });
 
 Deno.test("only auto-replied is an auto-reply; auto-generated is ordinary machine mail", () => {
@@ -74,6 +77,9 @@ Deno.test("iCalendar method subjects are calendar notices from anyone", () => {
 });
 
 Deno.test("an ambiguous subject is a calendar notice only from the calendar", () => {
-  assertEquals(isCalendarNotice("calendar-notification@google.com", "Notification: Bid deadline"), true);
+  assertEquals(
+    isCalendarNotice("calendar-notification@google.com", "Notification: Bid deadline"),
+    true,
+  );
   assertEquals(isCalendarNotice("jo@partner.test", "Notification: your order shipped"), false);
 });

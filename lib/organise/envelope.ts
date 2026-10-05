@@ -48,7 +48,9 @@ export function envelopeOf(get: (name: string) => string | undefined): Envelope 
 }
 
 /** A case-insensitive lookup over a plain header record, as held in a capture. */
-export function headerLookup(headers: Record<string, string>): (name: string) => string | undefined {
+export function headerLookup(
+  headers: Record<string, string>,
+): (name: string) => string | undefined {
   const lower = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
   return (name) => lower.get(name.toLowerCase());
 }

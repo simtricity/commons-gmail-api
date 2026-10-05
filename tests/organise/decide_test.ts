@@ -19,7 +19,9 @@ const YEAR = 365.25 * 86_400_000;
 function answers(nouls: Record<string, number>, choices: Record<string, string> = {}) {
   const out: Record<string, Answer> = {};
   for (const [q, noul] of Object.entries(nouls)) out[q] = { type: "noul", noul };
-  for (const [q, choice] of Object.entries(choices)) out[q] = { type: "choice", choice, confidence: 0.9 };
+  for (const [q, choice] of Object.entries(choices)) {
+    out[q] = { type: "choice", choice, confidence: 0.9 };
+  }
   return out;
 }
 
@@ -34,7 +36,11 @@ const NEUTRAL = {
 };
 
 function msg(
-  over: Partial<DecisionInput> & { nouls?: Record<string, number>; choices?: Record<string, string>; env?: Partial<Envelope> } = {},
+  over: Partial<DecisionInput> & {
+    nouls?: Record<string, number>;
+    choices?: Record<string, string>;
+    env?: Partial<Envelope>;
+  } = {},
 ): DecisionInput {
   const { nouls, choices, env, ...rest } = over;
   const from = rest.from ?? "Vendor <info@vendor.test>";
@@ -97,7 +103,10 @@ Deno.test("an auto-reply goes even from someone you know well", () => {
 });
 
 Deno.test("a calendar reply goes whoever sends it", () => {
-  assertEquals(verdictOf(msg({ from: "jo@partner.test", subject: "Accepted: Site walk" })), "calendar:delete");
+  assertEquals(
+    verdictOf(msg({ from: "jo@partner.test", subject: "Accepted: Site walk" })),
+    "calendar:delete",
+  );
 });
 
 Deno.test("missing core answers never delete", () => {
@@ -111,7 +120,12 @@ Deno.test("missing core answers never delete", () => {
 Deno.test("a known sender is kept unless emphatically perishable", () => {
   assertEquals(verdictOf(msg({ from: "Jo <jo@partner.test>" })), "known-sender:keep");
   assertEquals(
-    verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: { ...PERISHABLE, needs_personal_response: 0.05 } })),
+    verdictOf(
+      msg({
+        from: "Jo <jo@partner.test>",
+        nouls: { ...PERISHABLE, needs_personal_response: 0.05 },
+      }),
+    ),
     "known-sender:delete",
   );
 });
@@ -123,7 +137,10 @@ Deno.test("a colleague at a trusted domain inherits nothing without enough histo
 
 Deno.test("a machine address forfeits the protection its domain would give", () => {
   assertEquals(decide(msg({ from: "Jo <jo@partner.test>" }), ctx).protected, "address");
-  const campaign = msg({ from: "Jo <jo@partner.test>", env: { listUnsubscribe: "<mailto:u@x.test>" } });
+  const campaign = msg({
+    from: "Jo <jo@partner.test>",
+    env: { listUnsubscribe: "<mailto:u@x.test>" },
+  });
   assertEquals(decide(campaign, ctx).protected, null);
   assertEquals(decide(msg({ from: "me@home.test" }), ctx).protected, null);
 });
@@ -136,7 +153,9 @@ Deno.test("impersonal, not a record and perishable is deleted", () => {
 
 Deno.test("bulk that asks nothing and records nothing is deleted", () => {
   assertEquals(
-    verdictOf(msg({ nouls: { bulk_automated: 0.95, is_a_record: 0.1, needs_personal_response: 0.05 } })),
+    verdictOf(
+      msg({ nouls: { bulk_automated: 0.95, is_a_record: 0.1, needs_personal_response: 0.05 } }),
+    ),
     "bulk:delete",
   );
 });
@@ -153,7 +172,12 @@ Deno.test("operational machine mail whose record lives elsewhere is deferred", (
   assertEquals(verdictOf(msg({ nouls: { ...ops, concerns_my_operations: 0.9 } })), "ops:defer");
   // The unstable relevance Choice no longer decides anything.
   assertEquals(
-    verdictOf(msg({ nouls: { ...ops, concerns_my_operations: 0.2 }, choices: { relevance: "directly_relevant" } })),
+    verdictOf(
+      msg({
+        nouls: { ...ops, concerns_my_operations: 0.2 },
+        choices: { relevance: "directly_relevant" },
+      }),
+    ),
     "none:keep",
   );
 });
@@ -167,7 +191,10 @@ Deno.test("a known vendor's monitoring is deferred, not kept by the known-sender
     record_lives_elsewhere: 0.9,
     concerns_my_operations: 0.85,
   };
-  assertEquals(verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: usage })), "known-sender:defer");
+  assertEquals(
+    verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: usage })),
+    "known-sender:defer",
+  );
 });
 
 Deno.test("an unknown sender's notifications still meet the delete routes before ops", () => {
@@ -192,7 +219,9 @@ Deno.test("a durable record is important, even when it looks perishable", () => 
 });
 
 Deno.test("a machine-sent record is kept, not important: a receipt is routine", () => {
-  const receipt = msg({ nouls: { is_a_record: 0.95, record_lives_elsewhere: 0.1, bulk_automated: 0.97 } });
+  const receipt = msg({
+    nouls: { is_a_record: 0.95, record_lives_elsewhere: 0.1, bulk_automated: 0.97 },
+  });
   assertEquals(decide(receipt, ctx).verdict, "keep");
   const data = msg({ nouls: { carries_private_data: 0.9, bulk_automated: 0.95 } });
   assertEquals(decide(data, ctx).verdict, "keep");
@@ -219,12 +248,18 @@ Deno.test("a sustained relationship writing personally is important; a passing o
     verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: { is_personal: 0.85 } })),
     "important-relationship:important",
   );
-  assertEquals(verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: { is_personal: 0.4 } })), "known-sender:keep");
+  assertEquals(
+    verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: { is_personal: 0.4 } })),
+    "known-sender:keep",
+  );
 });
 
 Deno.test("a strong relationship's working email is important even when it reads as impersonal", () => {
   const cc = { is_personal: 0.06, bulk_automated: 0.07, is_a_record: 0.36 };
-  assertEquals(verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: cc })), "important-relationship:important");
+  assertEquals(
+    verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: cc })),
+    "important-relationship:important",
+  );
   // A strong relationship's machine mail is not.
   assertEquals(
     verdictOf(msg({ from: "Jo <jo@partner.test>", nouls: { ...cc, bulk_automated: 0.6 } })),
@@ -248,14 +283,20 @@ Deno.test("a LISTSERV list is a discussion list, deferred ahead of the delete ro
   assertEquals(
     verdictOf(msg({
       nouls: { ...PERISHABLE, bulk_automated: 0.95 },
-      env: { returnPath: "<owner-stds-wg@listserv.lists.test>", listUnsubscribe: "<mailto:u@lists.test>" },
+      env: {
+        returnPath: "<owner-stds-wg@listserv.lists.test>",
+        listUnsubscribe: "<mailto:u@lists.test>",
+      },
     })),
     "list:defer",
   );
 });
 
 Deno.test("your own relaying group is not a discussion list", () => {
-  const own = msg({ nouls: { is_personal: 0.2 }, env: { listPost: "<mailto:team@home.test>", returnPath: "<team+bnc@home.test>" } });
+  const own = msg({
+    nouls: { is_personal: 0.2 },
+    env: { listPost: "<mailto:team@home.test>", returnPath: "<team+bnc@home.test>" },
+  });
   assertEquals(decide(own, ctx).route === "list", false);
 });
 
@@ -271,26 +312,55 @@ Deno.test("a signed mass mailing goes even when it reads as a little personal", 
 });
 
 Deno.test("emphatically perishable machine mail goes despite a middling record score", () => {
-  const cart = { bulk_automated: 0.97, is_perishable: 0.92, is_a_record: 0.44, is_personal: 0.38, needs_personal_response: 0.1 };
-  assertEquals(verdictOf(msg({ from: "donotreply@shop.test", nouls: cart })), "perishable-machine:delete");
+  const cart = {
+    bulk_automated: 0.97,
+    is_perishable: 0.92,
+    is_a_record: 0.44,
+    is_personal: 0.38,
+    needs_personal_response: 0.1,
+  };
+  assertEquals(
+    verdictOf(msg({ from: "donotreply@shop.test", nouls: cart })),
+    "perishable-machine:delete",
+  );
   // A known sender's machine mail is judged by the known-sender route instead.
-  assertEquals(decide(msg({ from: "Jo <jo@partner.test>", nouls: cart }), ctx).route, "known-sender");
+  assertEquals(
+    decide(msg({ from: "Jo <jo@partner.test>", nouls: cart }), ctx).route,
+    "known-sender",
+  );
   // A receipt is a record, whatever its perishability.
-  assertEquals(decide(msg({ from: "donotreply@shop.test", nouls: { ...cart, is_a_record: 0.9 } }), ctx).verdict, "keep");
+  assertEquals(
+    decide(msg({ from: "donotreply@shop.test", nouls: { ...cart, is_a_record: 0.9 } }), ctx)
+      .verdict,
+    "keep",
+  );
 });
 
 Deno.test("cold outreach dressed as personal goes when it has nothing to do with your operations", () => {
-  const pitch = { is_personal: 0.89, needs_personal_response: 0.46, is_a_record: 0.11, concerns_my_operations: 0.09 };
+  const pitch = {
+    is_personal: 0.89,
+    needs_personal_response: 0.46,
+    is_a_record: 0.11,
+    concerns_my_operations: 0.09,
+  };
   assertEquals(verdictOf(msg({ from: "recruiter@agency.test", nouls: pitch })), "stranger:delete");
   // A stranger's genuine enquiry about your business stays.
   assertEquals(
-    decide(msg({ from: "new.customer@firm.test", nouls: { ...pitch, concerns_my_operations: 0.8 } }), ctx).verdict,
+    decide(
+      msg({ from: "new.customer@firm.test", nouls: { ...pitch, concerns_my_operations: 0.8 } }),
+      ctx,
+    ).verdict,
     "keep",
   );
 });
 
 Deno.test("a stranger with nothing personal or operational goes", () => {
-  const cold = { is_personal: 0.1, is_a_record: 0.05, needs_personal_response: 0.1, concerns_my_operations: 0.05 };
+  const cold = {
+    is_personal: 0.1,
+    is_a_record: 0.05,
+    needs_personal_response: 0.1,
+    concerns_my_operations: 0.05,
+  };
   assertEquals(verdictOf(msg({ from: "seo@webmail.test", nouls: cold })), "stranger:delete");
   // Unanswered, the operations question never deletes.
   const unasked = msg({ from: "seo@webmail.test", nouls: { is_personal: 0.1, is_a_record: 0.05 } });
@@ -309,8 +379,14 @@ Deno.test("a shared mailbox such as updates@ keeps the protection its address ea
       lastSeen: "2020-02-01T00:00:00Z",
     }],
   });
-  assertEquals(decide(msg({ from: "updates@partner.test" }), { ...ctx, relationships: rel }).protected, "address");
-  assertEquals(decide(msg({ from: "no-reply@partner.test" }), { ...ctx, relationships: rel }).protected, null);
+  assertEquals(
+    decide(msg({ from: "updates@partner.test" }), { ...ctx, relationships: rel }).protected,
+    "address",
+  );
+  assertEquals(
+    decide(msg({ from: "no-reply@partner.test" }), { ...ctx, relationships: rel }).protected,
+    null,
+  );
 });
 
 Deno.test("the elsewhere bar loosens with age", () => {

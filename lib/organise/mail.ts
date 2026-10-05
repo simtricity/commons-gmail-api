@@ -71,7 +71,10 @@ export function bodyText(msg: Message, maxChars: number): string {
   // fallback: HTML-only senders are common, so strip tags rather than send nothing.
   const html = plain ? null : findPart(msg.payload, "text/html");
   // fallback: neither part decodable, so use Gmail's own snippet.
-  const text = (plain ?? (html ? stripHtml(html) : null) ?? msg.snippet ?? "").replace(/\r\n/g, "\n");
+  const text = (plain ?? (html ? stripHtml(html) : null) ?? msg.snippet ?? "").replace(
+    /\r\n/g,
+    "\n",
+  );
 
   const trimmed = text
     .split("\n")

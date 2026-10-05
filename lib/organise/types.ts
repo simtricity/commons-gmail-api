@@ -8,7 +8,6 @@
  * @module
  */
 
-
 // ── decision model wire shapes ───────────────────────────────────────────────
 
 /** One typed question put to a System One decision model. */

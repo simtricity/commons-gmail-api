@@ -2,7 +2,12 @@ import { assertEquals } from "@std/assert";
 import { isSharedProvider, Relationships } from "../../lib/organise/relationships.ts";
 import type { Correspondent } from "../../lib/organise/types.ts";
 
-function person(address: string, genuine: number, firstSeen: string, lastSeen: string): Correspondent {
+function person(
+  address: string,
+  genuine: number,
+  firstSeen: string,
+  lastSeen: string,
+): Correspondent {
   return {
     address,
     domain: address.split("@")[1],
@@ -21,7 +26,10 @@ const rel = new Relationships({
     // Many messages, all in one week: a burst, not a relationship.
     person("sam@partner.test", 12, "2020-03-01T00:00:00Z", "2020-03-06T00:00:00Z"),
     person("once@elsewhere.test", 1, "2021-05-05T00:00:00Z", "2021-05-05T00:00:00Z"),
-    { ...person("list@lists.test", 90, "2015-01-01T00:00:00Z", "2025-01-01T00:00:00Z"), kind: "list" },
+    {
+      ...person("list@lists.test", 90, "2015-01-01T00:00:00Z", "2025-01-01T00:00:00Z"),
+      kind: "list",
+    },
   ],
 });
 

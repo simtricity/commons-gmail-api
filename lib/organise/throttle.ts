@@ -84,7 +84,9 @@ export class RateLimiter {
         this.tokens -= 1;
         return;
       }
-      await new Promise((r) => setTimeout(r, Math.max(10, ((1 - this.tokens) / this.ratePerSec) * 1000)));
+      await new Promise((r) =>
+        setTimeout(r, Math.max(10, ((1 - this.tokens) / this.ratePerSec) * 1000))
+      );
     }
   }
 }

@@ -60,9 +60,14 @@ export class Relationships {
   readonly #selfDomains: Set<string>;
   readonly #opts: Required<RelationshipOptions>;
 
-  constructor(corpus: Pick<Corpus, "correspondents" | "selfAddresses">, opts: RelationshipOptions = {}) {
+  constructor(
+    corpus: Pick<Corpus, "correspondents" | "selfAddresses">,
+    opts: RelationshipOptions = {},
+  ) {
     this.#opts = { ...RELATIONSHIP_DEFAULTS, ...opts };
-    this.#selfDomains = new Set((corpus.selfAddresses ?? []).map((a) => a.split("@").pop()!.toLowerCase()));
+    this.#selfDomains = new Set(
+      (corpus.selfAddresses ?? []).map((a) => a.split("@").pop()!.toLowerCase()),
+    );
     for (const c of corpus.correspondents) {
       // A mailing list is an audience, not a relationship.
       if (c.kind === "list") continue;

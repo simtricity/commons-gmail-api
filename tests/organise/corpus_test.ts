@@ -35,13 +35,15 @@ Deno.test("address and domain extraction", () => {
 });
 
 Deno.test("auto-replies are detected by subject", () => {
-  for (const s of [
-    "Out of office",
-    "Re: Out of Office",
-    "Automatic reply: your enquiry",
-    "Auto-Reply: away",
-    "Undeliverable: message",
-  ]) {
+  for (
+    const s of [
+      "Out of office",
+      "Re: Out of Office",
+      "Automatic reply: your enquiry",
+      "Auto-Reply: away",
+      "Undeliverable: message",
+    ]
+  ) {
     assertEquals(isAutoReply(msg({ Subject: s })), true, s);
   }
   assertEquals(isAutoReply(msg({ Subject: "Out of scope for this sprint" })), false);
@@ -59,7 +61,10 @@ Deno.test("List-Post separates discussion lists from broadcast newsletters", () 
   // A newsletter: unsubscribe only.
   assertEquals(isListMail(msg({ "List-Unsubscribe": "<mailto:x@y.com>" })), false);
   // A list you can post into.
-  assertEquals(isListMail(msg({ "List-Id": "<l.example.org>", "List-Post": "<mailto:l@x>" })), true);
+  assertEquals(
+    isListMail(msg({ "List-Id": "<l.example.org>", "List-Post": "<mailto:l@x>" })),
+    true,
+  );
 });
 
 Deno.test("classifySend prefers auto-reply over list-post", () => {

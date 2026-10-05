@@ -64,7 +64,13 @@ export function evaluate(
   decisions: Iterable<{ id: string; verdict: Verdict; route: string; why: string }>,
 ): EvalResult {
   const byId = new Map([...decisions].map((d) => [d.id, d]));
-  const out: EvalResult = { evaluated: 0, passed: 0, failures: [], criticalFailures: 0, notInRun: [] };
+  const out: EvalResult = {
+    evaluated: 0,
+    passed: 0,
+    failures: [],
+    criticalFailures: 0,
+    notInRun: [],
+  };
   for (const c of cases) {
     const d = byId.get(c.id);
     if (!d) {

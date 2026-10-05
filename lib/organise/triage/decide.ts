@@ -59,7 +59,12 @@ export interface DecisionThresholds {
   /** A discussion list you can post into, and nothing personal: defer. */
   list: { personalUnder: number; recordUnder: number; needsReplyUnder: number };
   /** A known sender's mail goes only if it is emphatically disposable. */
-  known: { perishableAtLeast: number; recordUnder: number; needsReplyUnder: number; personalUnder: number };
+  known: {
+    perishableAtLeast: number;
+    recordUnder: number;
+    needsReplyUnder: number;
+    personalUnder: number;
+  };
   /** A mass mailing, even one a person signed, that records nothing and asks nothing: delete. */
   campaign: { personalUnder: number; recordUnder: number; needsReplyUnder: number };
   /** Impersonal, not a record, and perishable: delete. */
@@ -116,13 +121,26 @@ export interface DecisionThresholds {
 }
 
 export const DEFAULT_THRESHOLDS: DecisionThresholds = {
-  important: { recordAtLeast: 0.85, elsewhereUnder: 0.50, dataAtLeast: 0.80, personalAtLeast: 0.70, machineUnder: 0.50, relationshipMachineUnder: 0.30 },
+  important: {
+    recordAtLeast: 0.85,
+    elsewhereUnder: 0.50,
+    dataAtLeast: 0.80,
+    personalAtLeast: 0.70,
+    machineUnder: 0.50,
+    relationshipMachineUnder: 0.30,
+  },
   list: { personalUnder: 0.50, recordUnder: 0.80, needsReplyUnder: 0.30 },
   known: { perishableAtLeast: 0.90, recordUnder: 0.20, needsReplyUnder: 0.15, personalUnder: 0.30 },
   campaign: { personalUnder: 0.50, recordUnder: 0.20, needsReplyUnder: 0.15 },
   perishable: { personalUnder: 0.15, recordUnder: 0.20, perishableAtLeast: 0.80 },
   bulk: { bulkAtLeast: 0.90, recordUnder: 0.20, needsReplyUnder: 0.15 },
-  ops: { concernsAtLeast: 0.70, bulkAtLeast: 0.85, elsewhereAtLeast: 0.70, recordUnder: 0.80, needsReplyUnder: 0.30 },
+  ops: {
+    concernsAtLeast: 0.70,
+    bulkAtLeast: 0.85,
+    elsewhereAtLeast: 0.70,
+    recordUnder: 0.80,
+    needsReplyUnder: 0.30,
+  },
   perishableMachine: {
     machineAtLeast: 0.95,
     perishableAtLeast: 0.90,
@@ -150,10 +168,15 @@ export const DEFAULT_THRESHOLDS: DecisionThresholds = {
 };
 
 /** Overrides are merged per group, so a config can move one number without restating the rest. */
-export type ThresholdOverrides = { [K in keyof DecisionThresholds]?: Partial<DecisionThresholds[K]> };
+export type ThresholdOverrides = {
+  [K in keyof DecisionThresholds]?: Partial<DecisionThresholds[K]>;
+};
 
 export function mergeThresholds(overrides: ThresholdOverrides = {}): DecisionThresholds {
-  const out = structuredClone(DEFAULT_THRESHOLDS) as unknown as Record<string, Record<string, unknown>>;
+  const out = structuredClone(DEFAULT_THRESHOLDS) as unknown as Record<
+    string,
+    Record<string, unknown>
+  >;
   for (const [group, values] of Object.entries(overrides)) {
     if (!(group in out)) throw new Error(`unknown threshold group "${group}"`);
     Object.assign(out[group], values);
@@ -235,9 +258,15 @@ export interface Facts {
  * shared mailboxes that people answer from, and campaigns are caught
  * structurally anyway, by their unsubscribe link or their platform envelope.
  */
-const MACHINE_LOCAL_PART = /(^|[.\-_])(no-?reply|do-?not-?reply|bounces?|mailer-daemon|postmaster)([.\-_]|$)/i;
+const MACHINE_LOCAL_PART =
+  /(^|[.\-_])(no-?reply|do-?not-?reply|bounces?|mailer-daemon|postmaster)([.\-_]|$)/i;
 
-function protectionOf(sender: string, domain: string, env: Envelope | undefined, rel: Relationships): Protection {
+function protectionOf(
+  sender: string,
+  domain: string,
+  env: Envelope | undefined,
+  rel: Relationships,
+): Protection {
   if (MACHINE_LOCAL_PART.test(sender.split("@")[0])) return null;
   if (env?.listUnsubscribe) return null; // a campaign, whoever signed it
   if (env && sentViaPlatform(env)) return null;
@@ -274,7 +303,8 @@ export function factsOf(input: DecisionInput, ctx: DecisionContext): Facts {
     protection: protectionOf(sender, domain, env, ctx.relationships),
     strength: ctx.relationships.strength(sender),
     campaign: isCampaign(env),
-    discussionList: Boolean(env) && isDiscussionList(env!) && !ctx.relationships.isSelfDomain(listHost),
+    discussionList: Boolean(env) && isDiscussionList(env!) &&
+      !ctx.relationships.isSelfDomain(listHost),
   };
 }
 
@@ -394,10 +424,15 @@ export const ROUTES: Route[] = [
     decide: (f, { thresholds: { important: t } }) => {
       if (f.protection !== "address" || f.strength !== "strong") return undefined;
       const p = f.p("is_personal");
-      if (p >= t.personalAtLeast) return { verdict: "important", why: `strong relationship, personal ${fmt(p)}` };
+      if (p >= t.personalAtLeast) {
+        return { verdict: "important", why: `strong relationship, personal ${fmt(p)}` };
+      }
       const machine = f.p("bulk_automated");
       return machine < t.relationshipMachineUnder
-        ? { verdict: "important", why: `strong relationship, written by a person (machine ${fmt(machine)})` }
+        ? {
+          verdict: "important",
+          why: `strong relationship, written by a person (machine ${fmt(machine)})`,
+        }
         : undefined;
     },
   },
@@ -468,8 +503,10 @@ export const ROUTES: Route[] = [
     name: "perishable-machine",
     decide: (f, { thresholds: { perishableMachine: t } }) => {
       const per = f.p("is_perishable");
-      return !f.protection && f.p("bulk_automated") >= t.machineAtLeast && per >= t.perishableAtLeast &&
-          f.p("is_a_record") < t.recordUnder && f.p("needs_personal_response") < t.needsReplyUnder &&
+      return !f.protection && f.p("bulk_automated") >= t.machineAtLeast &&
+          per >= t.perishableAtLeast &&
+          f.p("is_a_record") < t.recordUnder &&
+          f.p("needs_personal_response") < t.needsReplyUnder &&
           f.p("is_personal") < t.personalUnder
         ? { verdict: "delete", why: `machine mail, perishable ${fmt(per)}` }
         : undefined;
@@ -491,12 +528,15 @@ export const ROUTES: Route[] = [
     // Last, so every route that might keep or defer has had its turn.
     name: "stranger",
     decide: (f, { thresholds: { stranger: t } }) => {
-      if (f.protection || f.strength !== "none" || !(f.p("is_a_record") < t.recordUnder)) return undefined;
+      if (f.protection || f.strength !== "none" || !(f.p("is_a_record") < t.recordUnder)) {
+        return undefined;
+      }
       const concerns = f.p("concerns_my_operations");
       if (concerns < t.concernsStrictUnder) {
         return { verdict: "delete", why: `unknown sender, nothing operational (${fmt(concerns)})` };
       }
-      return f.p("is_personal") < t.personalUnder && f.p("needs_personal_response") < t.needsReplyUnder &&
+      return f.p("is_personal") < t.personalUnder &&
+          f.p("needs_personal_response") < t.needsReplyUnder &&
           concerns < t.concernsUnder
         ? { verdict: "delete", why: "unknown sender, nothing personal or operational" }
         : undefined;
@@ -507,15 +547,23 @@ export const ROUTES: Route[] = [
 /** What held a message back, for the residue that no route claimed. */
 function heldBecause(f: Facts, t: DecisionThresholds): string {
   const held: string[] = [];
-  if (!(f.p("is_a_record") < t.perishable.recordUnder)) held.push(`record ${fmt(f.p("is_a_record"))}`);
-  if (!(f.p("is_personal") < t.perishable.personalUnder)) held.push(`personal ${fmt(f.p("is_personal"))}`);
+  if (!(f.p("is_a_record") < t.perishable.recordUnder)) {
+    held.push(`record ${fmt(f.p("is_a_record"))}`);
+  }
+  if (!(f.p("is_personal") < t.perishable.personalUnder)) {
+    held.push(`personal ${fmt(f.p("is_personal"))}`);
+  }
   if (!(f.p("is_perishable") >= t.perishable.perishableAtLeast)) {
     held.push(`perishable ${fmt(f.p("is_perishable"))}`);
   }
   return held.join(", ") || "no route";
 }
 
-export function decide(input: DecisionInput, ctx: DecisionContext, routes: Route[] = ROUTES): Decision {
+export function decide(
+  input: DecisionInput,
+  ctx: DecisionContext,
+  routes: Route[] = ROUTES,
+): Decision {
   const f = factsOf(input, ctx);
   const base = {
     id: input.id,

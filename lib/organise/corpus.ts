@@ -15,7 +15,7 @@
 import { header } from "../mime.ts";
 import type { Message } from "../types.ts";
 import { addressesIn, isAutoReply, isListMail, senderOf } from "./mail.ts";
-import type { Correspondent, Corpus } from "./types.ts";
+import type { Corpus, Correspondent } from "./types.ts";
 
 /** How one sent message reached its recipients. */
 export type SendKind = "genuine" | "auto-reply" | "list-post";
