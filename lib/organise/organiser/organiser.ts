@@ -13,8 +13,10 @@ import type { StageContext } from "./context.ts";
 import { fetchRun, sample } from "./fetch.ts";
 import { judge } from "./judge.ts";
 import { decide, explain, find, runs, score } from "./decide.ts";
+import { apply, reconcile } from "./labels.ts";
 import { layout, readJsonOr } from "./store.ts";
 import type {
+  ApplySummary,
   CaptureSummary,
   CorpusSummary,
   DecideSummary,
@@ -23,6 +25,7 @@ import type {
   JudgeSummary,
   Manifest,
   OrganiserIO,
+  ReconcileResult,
   SampleOptions,
 } from "./types.ts";
 
@@ -130,6 +133,20 @@ export class Organiser {
   /** One scheme's stored decisions against its golden cases. */
   score(o: { run: string; scheme: string }): Promise<ScoreResult> {
     return score(this.#ctx, o);
+  }
+
+  /**
+   * One scheme's decisions as labels inside its prefix. A dry run unless `apply`.
+   * Each applied group is kept in `runs/<run>/apply.<scheme>.log` (ids sorted,
+   * `idsSha256` as the guard logs it), which is what makes an apply undoable.
+   */
+  apply(o: { run: string; scheme: string; apply?: boolean }): Promise<ApplySummary> {
+    return apply(this.#ctx, o);
+  }
+
+  /** Lists each of the scheme's labels and compares them with the decisions. Writes nothing. */
+  reconcile(o: { run: string; scheme: string }): Promise<ReconcileResult> {
+    return reconcile(this.#ctx, o);
   }
 
   /** The facts, answers and decision behind one message's category. */

@@ -5,7 +5,16 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { Organiser, type OrganiserIO } from "../../organise.ts";
 import { ProfileError } from "../../lib/organise/scheme.ts";
-import { SCOPE_READONLY } from "../../mod.ts";
+import {
+  GmailApiError,
+  GmailWriter,
+  GuardedWriter,
+  idsSha256,
+  SCOPE_COMPOSE,
+  SCOPE_MODIFY,
+  SCOPE_READONLY,
+  ScopedRelabelError,
+} from "../../mod.ts";
 import { FakeJev, FakeMailbox } from "./contract/fakes.ts";
 import { SystemOneJudge } from "../../lib/organise/judge.ts";
 import { FLAKY, NOW, RECEIVED, SENT } from "./contract/fixtures.ts";
@@ -264,5 +273,185 @@ Deno.test("decide without a corpus still decides, treating nobody as known", asy
   const out = await org.decide({ run: "r", now: NOW, schemes: ["triage"] });
   assert(out.triage.counts.delete >= 1);
   assert(w.lines.some((l) => l.includes("no corpus")));
+  await w.done();
+});
+
+const WRITE = `${SCOPE_READONLY} ${SCOPE_MODIFY} ${SCOPE_COMPOSE}`;
+
+const jsonLines = async (path: string) =>
+  (await Deno.readTextFile(path)).split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+
+const ours = (names: string[], prefix: string) => names.filter((n) => n.startsWith(prefix));
+
+Deno.test("apply and reconcile: dry run first, changed messages only, every group logged (R2)", async () => {
+  const { w } = await judged();
+  const guardLog = `${w.dir}/../${w.dir.split("/").at(-1)}-guard.log`;
+  w.io.writer = new GuardedWriter(new GmailWriter(w.mailbox.client(WRITE)), {
+    log: { path: guardLog, via: "test" },
+  });
+  const org = await Organiser.open(w.dir, w.io);
+  await org.corpus();
+  await org.judge({ run: "r" });
+  await org.decide({ run: "r", now: NOW });
+  const before = w.mailbox.writes().length;
+
+  const plan = await org.apply({ run: "r", scheme: "triage" });
+  assertEquals([plan.dryRun, plan.calls, plan.unchanged], [true, 0, 0]);
+  assertEquals(plan.toCreate, [
+    "organiser/2020/defer",
+    "organiser/2020/delete",
+    "organiser/2020/important",
+    "organiser/2020/keep",
+  ]);
+  assertEquals(plan.moves, {
+    "unlabelled → delete": 5,
+    "unlabelled → defer": 1,
+    "unlabelled → keep": 1,
+    "unlabelled → important": 2,
+  });
+  assertEquals(w.mailbox.writes().length, before, "a dry run writes nothing");
+
+  const done = await org.apply({ run: "r", scheme: "triage", apply: true });
+  assertEquals([done.dryRun, done.calls], [false, 4]);
+  for (const call of w.mailbox.writes()) {
+    assert(
+      call.method === "POST" && (call.path === "/labels" || call.path === "/messages/batchModify"),
+      `${call.method} ${call.path}`,
+    );
+  }
+  const applied = await jsonLines(`${w.dir}/runs/r/apply.triage.log`);
+  const guarded = (await jsonLines(guardLog))
+    .filter((l) => l.op === "label.relabel")
+    .map((l) => l.idsSha256);
+  assertEquals(applied.length, 4);
+  for (const line of applied) {
+    assertEquals(Object.keys(line), ["at", "scheme", "add", "remove", "ids", "idsSha256", "calls"]);
+    assertEquals(line.ids, [...line.ids].sort());
+    assertEquals(line.idsSha256, await idsSha256(line.ids));
+    assert(guarded.includes(line.idsSha256), "the guard logged the same change");
+  }
+  const manifest = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/r/manifest.json`));
+  assertEquals(manifest.apply.triage.calls, 4);
+
+  const again = await org.apply({ run: "r", scheme: "triage" });
+  assertEquals([again.unchanged, again.toCreate, again.moves], [9, [], {}]);
+  const ok = await org.reconcile({ run: "r", scheme: "triage" });
+  assertEquals([ok.ok, ok.counts], [true, { delete: 5, defer: 1, keep: 1, important: 2 }]);
+  assertEquals(ok.outsideRun["organiser/2020/delete"], 0);
+
+  // A hand move is caught, then fixed by relabelling that message alone.
+  const del = w.mailbox.labelByName("organiser/2020/delete")!;
+  const keep = w.mailbox.labelByName("organiser/2020/keep")!;
+  const r1 = w.mailbox.messages.get("r1")!;
+  r1.labelIds = r1.labelIds.filter((l) => l !== del.id).concat(keep.id);
+  const off = await org.reconcile({ run: "r", scheme: "triage" });
+  assertEquals([off.ok, off.wrong], [false, [{ id: "r1", decided: "delete", labelled: "keep" }]]);
+  const fix = await org.apply({ run: "r", scheme: "triage", apply: true });
+  assertEquals([fix.moves, fix.calls], [{ "keep → delete": 1 }, 1]);
+  assertEquals((await jsonLines(`${w.dir}/runs/r/apply.triage.log`)).at(-1).ids, ["r1"]);
+  assertEquals((await org.reconcile({ run: "r", scheme: "triage" })).ok, true);
+
+  // An unlabelled category is never labelled, and counts messages carrying none.
+  await org.apply({ run: "r", scheme: "project", apply: true });
+  const project = await org.reconcile({ run: "r", scheme: "project" });
+  assertEquals([project.ok, project.counts], [true, { alpha: 1, beta: 1, none: 7 }]);
+  assertEquals(ours(w.mailbox.labelNames("r1"), "project/"), []);
+
+  await Deno.remove(guardLog);
+  await w.done();
+});
+
+Deno.test("apply: refuses to write without a writer, after a dry run is still free", async () => {
+  const { w, org } = await judged();
+  await org.judge({ run: "r" });
+  await org.decide({ run: "r", now: NOW, schemes: ["triage"] });
+  assertEquals((await org.apply({ run: "r", scheme: "triage" })).dryRun, true);
+  const before = w.mailbox.writes().length;
+  await assertRejects(
+    () => org.apply({ run: "r", scheme: "triage", apply: true }),
+    TypeError,
+    "write grant",
+  );
+  assertEquals(w.mailbox.writes().length, before);
+  await w.done();
+});
+
+/** A writer whose `n`th batchModify is refused with 403. */
+class RefusingWriter extends GmailWriter {
+  calls = 0;
+  constructor(client: ConstructorParameters<typeof GmailWriter>[0], readonly refuse: number) {
+    super(client);
+  }
+  override async batchModifyMessages(
+    ids: string[],
+    change: Parameters<GmailWriter["batchModifyMessages"]>[1],
+  ): Promise<number> {
+    if (++this.calls === this.refuse) {
+      throw new GmailApiError(403, "/messages/batchModify", '{"error":{"code":403}}');
+    }
+    return await super.batchModifyMessages(ids, change);
+  }
+}
+
+Deno.test("apply: a group refused part way logs what landed, then rethrows (R2, R-c)", async () => {
+  const ids = Array.from({ length: 1500 }, (_, i) => `m${String(i).padStart(4, "0")}`);
+  const date = String(Date.UTC(2020, 5, 1));
+  const w = await setup({
+    "profile.json": {
+      schemes: {
+        project: {
+          kind: "choice",
+          question: { id: "project", instructions: "Which?", options: { alpha: "", none: "" } },
+          labels: { pattern: "project/{category}" },
+          unlabelled: ["none"],
+        },
+      },
+    },
+    "runs/big/manifest.json": { id: "big", createdAt: new Date(NOW).toISOString() },
+    "runs/big/messages.json": {
+      messages: ids.map((id) => ({ id, internalDate: date })),
+      rejected: [],
+    },
+    "runs/big/decisions.project.json": {
+      scheme: "project",
+      decidedAt: new Date(NOW).toISOString(),
+      now: new Date(NOW).toISOString(),
+      decisions: [...ids].reverse().map((id) => ({
+        id,
+        scheme: "project",
+        category: "alpha",
+        route: "choice",
+        why: "",
+        sender: "a@b.test",
+        subject: "",
+      })),
+    },
+  });
+  const guardLog = `${w.dir}-guard.log`;
+  w.io.writer = new GuardedWriter(new RefusingWriter(w.mailbox.client(WRITE), 2), {
+    log: { path: guardLog, via: "test" },
+  });
+  const org = await Organiser.open(w.dir, w.io);
+  const e = await assertRejects(
+    () => org.apply({ run: "big", scheme: "project", apply: true }),
+    ScopedRelabelError,
+  );
+  assertEquals([e.callsDone, e.status], [1, 403]);
+  const [line] = await jsonLines(`${w.dir}/runs/big/apply.project.log`);
+  assertEquals(line.ids, ids, "every id of the group, sorted");
+  assertEquals([line.calls, line.partial, line.error], [1, true, {
+    name: "GmailApiError",
+    status: 403,
+  }]);
+  assertEquals(line.idsSha256, e.idsSha256);
+  const [guarded] = (await jsonLines(guardLog)).filter((l) => l.op === "label.relabel");
+  assertEquals([guarded.idsSha256, guarded.callsDone, guarded.partial], [line.idsSha256, 1, true]);
+  const manifest = JSON.parse(await Deno.readTextFile(`${w.dir}/runs/big/manifest.json`));
+  assertEquals(
+    manifest.apply,
+    undefined,
+    "a failed apply is recorded in its log, not the manifest",
+  );
+  await Deno.remove(guardLog);
   await w.done();
 });
