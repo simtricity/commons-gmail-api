@@ -3,6 +3,44 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.6.0] - 2026-10-04
+
+Reading a message now shows where it really came from, where its links go, and, for a bounce,
+who failed and why. Checking a suspected phishing email or a failed send needs no custom code.
+
+### Added
+
+- **Authentication summary** (`lib/headers.ts`): `authSummary(msg)` reports DKIM (result, signing
+  domain, selector), SPF (result, envelope sender) and DMARC (result, published policy) from the
+  **topmost** `Authentication-Results` written by `mx.google.com`, ignoring any lower copy a sender
+  could have forged. `flags` are warnings (`dkim-fail`, `dkim-not-aligned`, `spf-fail`,
+  `dmarc-fail`, `dmarc-none`, `reply-to-other-domain`, `no-authentication-results`); `notes` are
+  context that is normal on its own (`return-path-other-domain`, `dmarc-policy-none`).
+- `parseAuthenticationResults(value)` (RFC 8601, also takes the ARC form), `allHeaders(msg)`,
+  `provenanceHeaders(msg)`, `addressDomain()`, and `orgDomain()` (approximate organisational
+  domain without a Public Suffix List).
+- **Links** (`lib/links.ts`): `messageLinks(msg)` returns every `href` from the HTML part, taken
+  before tags are stripped (bare URLs from plain text when there is no HTML), a host → count
+  summary, and `mismatch` where the visible text names a different organisation from the
+  target. `extractHtmlLinks()` and `extractTextLinks()` are exported.
+- `readMessage` / `readMessages` always include `auth`; `{ headers: true }` adds every header and
+  `{ links: true }` adds the links.
+- `rawMessage(gmail, id)`: the message exactly as received (RFC 5322 bytes).
+- **Bounces** (`lib/bounce.ts`): `parseBounce(msg)` reads RFC 3464 delivery status reports,
+  including Gmail's layout (per-message fields as part headers, per-recipient fields in a child
+  part) and relays that write free-text `Final-Recipient` or a bare `550` status, with a
+  plain-text fallback for notices that carry no report. Each recipient gets action, enhanced
+  status, severity, remote server, the server's own words and a `reason` (`no-such-user`,
+  `suppressed`, `mailbox-full`, `domain-not-found`, `policy`, `temporary`, `other`). The original
+  message's From/To/Cc/Subject/Message-ID come from the returned headers. `isBounce()`,
+  `bounceReason()`, `BOUNCE_QUERY`, and `findBounces(gmail, { recipient, days })` to search the
+  mailbox for a recipient's bounce history.
+- `readMessage` adds `bounce` when the message is a delivery failure notice.
+- CLI: `read` prints a one-line DKIM/SPF/DMARC summary with flags, plus the bounce details for a
+  bounce; `read --headers` and `read --links`; `raw --message <id> --out <dir>` saves
+  `<id>.eml` (mode 0600) with its sha256; `bounces [--recipient <addr>] [--days N]` lists
+  delivery failures grouped by recipient, oldest cause last.
+
 ## [0.5.0] - 2026-10-02
 
 Drafts can carry file attachments.

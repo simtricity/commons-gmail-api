@@ -16,6 +16,11 @@
  *   search       -q <gmail query> [--max N] [--threads]   Message ids + metadata, or grouped by
  *                thread with --threads. No bodies.
  *   read         --thread <id> | --message <id> [--max-chars N]   Headers + body text (default 8000/msg)
+ *                [--headers] every header · [--links] body links, hosts, text/target mismatches.
+ *                Always shows a DKIM/SPF/DMARC line with phishing flags.
+ *   raw          --message <id> --out <dir>      Save the message as received, <id>.eml (0600)
+ *   bounces      [--recipient <addr>] [--days N] [--max N]   Delivery failures, grouped by
+ *                recipient, with status, reason and the remote server's words (default 90 days)
  *   attachments list  --thread <id> | --message <id>
  *   attachments fetch --thread <id> | --message <id> --out <dir>
  *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
@@ -65,9 +70,11 @@ const args = parseArgs(Deno.args, {
     "reply-to",
     "max-chars",
     "body-file",
+    "recipient",
+    "days",
   ],
   collect: ["include", "filename", "to", "cc", "attach"],
-  boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads"],
+  boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads", "headers", "links"],
   alias: { h: "help" },
 });
 
@@ -89,7 +96,10 @@ Commands:
   whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
   search       -q <gmail query> [--max N] [--threads]   Ids + metadata (grouped by thread with --threads)
-  read         --thread <id> | --message <id> [--max-chars N]   Headers + body text
+  read         --thread <id> | --message <id> [--max-chars N]   Headers + body text + auth line
+               [--headers] every header   [--links] body links, host counts, text/target mismatches
+  raw          --message <id> --out <dir>     Save the message as received (<id>.eml) for forensics
+  bounces      [--recipient <addr>] [--days N] [--max N]   Delivery failures by recipient (90 days)
   attachments list  --thread <id> | --message <id>
   attachments fetch --thread <id> | --message <id> --out <dir>
                [--include <glob>]... [--filename <exact>]... [--inline]
@@ -167,7 +177,21 @@ try {
     case "read":
       await commands.read(ctx, { thread: args.thread, message: args.message }, {
         maxChars: args["max-chars"] ? Number(args["max-chars"]) : 8000,
+        headers: args.headers,
+        links: args.links,
       });
+      break;
+    case "bounces":
+      await commands.bounces(ctx, {
+        recipient: args.recipient,
+        days: args.days ? Number(args.days) : undefined,
+        max: args.max ? Number(args.max) : undefined,
+      });
+      break;
+    case "raw":
+      if (!args.message) throw new Error("raw needs --message <id>");
+      if (!args.out) throw new Error("raw needs --out <dir>");
+      await commands.raw(ctx, { message: args.message, outDir: args.out });
       break;
     case "labels":
       await commands.labels(ctx);

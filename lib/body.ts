@@ -5,6 +5,9 @@
  */
 
 import type { GmailClient } from "./client.ts";
+import { allHeaders, type AuthSummary, authSummary, type HeaderLine } from "./headers.ts";
+import { type MessageLinks, messageLinks } from "./links.ts";
+import { type Bounce, parseBounce } from "./bounce.ts";
 import { decodeBase64Url, header, summarize } from "./mime.ts";
 import type { Message, MessagePart } from "./types.ts";
 
@@ -21,10 +24,18 @@ export interface BodyText {
   truncatedChars: number;
 }
 
-/** Options for {@link bodyText} and {@link readMessages}. */
+/** Options for {@link bodyText}. */
 export interface BodyTextOptions {
   /** Cap on characters returned per message. Default: no cap. */
   maxChars?: number;
+}
+
+/** Options for {@link readMessage} and {@link readMessages}. */
+export interface ReadOptions extends BodyTextOptions {
+  /** Include every header, in message order, as `headers`. */
+  headers?: boolean;
+  /** Include the body's links, host counts and mismatch flags as `links`. */
+  links?: boolean;
 }
 
 function decodeText(data?: string): string {
@@ -113,10 +124,18 @@ export interface ReadMessage {
   source: BodySource;
   /** Characters cut by `maxChars`. */
   truncatedChars: number;
+  /** DKIM, SPF and DMARC as the receiving server judged them, with phishing flags. */
+  auth: AuthSummary;
+  /** Every header, in order. Only with `headers: true`. */
+  headers?: HeaderLine[];
+  /** Links in the body. Only with `links: true`. */
+  links?: MessageLinks;
+  /** Present when the message is a delivery failure notice: who failed and why. */
+  bounce?: Bounce;
 }
 
 /** Turn one full-format message into a {@link ReadMessage}. */
-export function readMessage(msg: Message, opts: BodyTextOptions = {}): ReadMessage {
+export function readMessage(msg: Message, opts: ReadOptions = {}): ReadMessage {
   const s = summarize(msg);
   const body = bodyText(msg, opts);
   const cc = header(msg.payload, "cc");
@@ -137,14 +156,23 @@ export function readMessage(msg: Message, opts: BodyTextOptions = {}): ReadMessa
     text: body.text,
     source: body.source,
     truncatedChars: body.truncatedChars,
+    auth: authSummary(msg),
+    ...(opts.headers ? { headers: allHeaders(msg) } : {}),
+    ...(opts.links ? { links: messageLinks(msg) } : {}),
+    ...bounceField(msg),
   };
+}
+
+function bounceField(msg: Message): { bounce?: Bounce } {
+  const b = parseBounce(msg);
+  return b ? { bounce: b } : {};
 }
 
 /** Read every message in a thread (oldest first), or one message, as text. */
 export async function readMessages(
   gmail: GmailClient,
   target: { threadId?: string; messageId?: string },
-  opts: BodyTextOptions = {},
+  opts: ReadOptions = {},
 ): Promise<ReadMessage[]> {
   if (!!target.threadId === !!target.messageId) {
     throw new Error("readMessages: pass exactly one of threadId or messageId");
@@ -153,4 +181,14 @@ export async function readMessages(
     ? (await gmail.getThread(target.threadId, "full")).messages ?? []
     : [await gmail.getMessage(target.messageId!, "full")];
   return msgs.map((m) => readMessage(m, opts));
+}
+
+/**
+ * The message exactly as received (RFC 5322 bytes, `format: "raw"`), for saving as `.eml` and
+ * inspecting in a mail client or forensic tool.
+ */
+export async function rawMessage(gmail: GmailClient, messageId: string): Promise<Uint8Array> {
+  const m = await gmail.getMessage(messageId, "raw");
+  if (!m.raw) throw new Error(`rawMessage: Gmail returned no raw body for ${messageId}`);
+  return decodeBase64Url(m.raw);
 }

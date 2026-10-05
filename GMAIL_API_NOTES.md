@@ -58,6 +58,23 @@ Observed while building and testing this client. Vendor behaviour, not ours.
 - `gmail.labels` cannot apply a label to a message; `gmail.modify` is the least privilege that can.
 - `gmail.compose` permits `drafts.create/update/delete` **and** `drafts.send`. Not implementing send
   is the only thing stopping it.
+- Provenance headers (observed 2026-10-04): Gmail's `format: "full"` returns every header in
+  message order, newest first. The topmost `Authentication-Results` and
+  `ARC-Authentication-Results` (`i=1`) are both written by `mx.google.com` and carry the same
+  verdicts; the DMARC policy only appears in Google's comment (`dmarc=pass (p=NONE sp=NONE
+  dis=NONE)`), not as a property. `Return-Path` can appear twice (Google repeats it).
+  Mail sent through a bulk provider passes DMARC through DKIM alignment while SPF passes for
+  the provider's bounce domain, so a Return-Path on another domain is normal there.
+- Bounces (observed 2026-10-05): Gmail's delivery reports are `multipart/report;
+  report-type=delivery-status`. The `message/delivery-status` part has no body of its own: the
+  per-message fields (`Reporting-MTA`, `Arrival-Date`, `X-Original-Message-ID`) arrive as
+  **headers of its child** `text/plain` part, and the per-recipient fields as that child's body.
+  The original message's headers come back as a `text/rfc822-headers` part. When sending through a
+  "Send mail as" SMTP relay, any relay rejection is reported with the same "your 'Send mail as'
+  settings are misconfigured" text (`?p=CustomFromDenied`); the real cause is in
+  `Diagnostic-Code`. Some relays write `Final-Recipient` as free text and `Status` as a bare SMTP
+  code (`550`).
+- `format: "raw"` returns the whole RFC 5322 message base64url-encoded in `raw`, with no `payload`.
 - Drafts with attachments (probed 2026-10-02): the plain JSON `POST /drafts` with `message.raw`
   accepted 5, 10 and 20 MB random-byte attachments (~5 s, ~9 s, ~16 s), so the
   `/upload/…?uploadType=multipart` endpoint is not needed under the 25 MB send limit. Gmail
