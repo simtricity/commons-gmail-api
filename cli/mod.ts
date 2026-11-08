@@ -46,11 +46,11 @@
  *   GMAIL_API_CREDENTIALS_MODIFY  default ~/.simt/gmail-api/credentials.modify.json (--write)
  *   GMAIL_API_LOOPBACK_PORT    default 8731
  *   GMAIL_NO_BROWSER=1         print the auth URL instead of opening a browser
+ *   GMAIL_API_AUTH_LOG         default ~/.simt/gmail-api/auth.log (sign-in events, never tokens)
  */
 
 import { parseArgs } from "@std/cli/parse-args";
 import * as commands from "./commands.ts";
-import { GmailApiError, NotSignedInError, OAuthError } from "../lib/mod.ts";
 
 const args = parseArgs(Deno.args, {
   // --skip-existing takes an optional dir; bare flag parses as "" → use --out
@@ -112,7 +112,7 @@ Options:
   --json              Machine-readable output
   -h, --help          This help
 
-Env: GMAIL_CLIENT_SECRET_PATH, GMAIL_API_CREDENTIALS, GMAIL_API_CREDENTIALS_MODIFY, GMAIL_API_LOOPBACK_PORT, GMAIL_NO_BROWSER`);
+Env: GMAIL_CLIENT_SECRET_PATH, GMAIL_API_CREDENTIALS, GMAIL_API_CREDENTIALS_MODIFY, GMAIL_API_LOOPBACK_PORT, GMAIL_NO_BROWSER, GMAIL_API_AUTH_LOG`);
 }
 
 if (!command || args.help) {
@@ -234,15 +234,6 @@ try {
       Deno.exit(1);
   }
 } catch (e) {
-  if (
-    e instanceof NotSignedInError || e instanceof OAuthError ||
-    e instanceof GmailApiError
-  ) {
-    console.error(`error: ${e.message}`);
-  } else if (e instanceof Error) {
-    console.error(`error: ${e.message}`);
-  } else {
-    console.error(`error: ${String(e)}`);
-  }
+  console.error(`error: ${commands.errorText(ctx, e)}`);
   Deno.exit(1);
 }

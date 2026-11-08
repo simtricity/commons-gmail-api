@@ -4,6 +4,7 @@
  */
 
 import {
+  type AuthEvent,
   type ClientSecret,
   DEFAULT_MAX_IDS,
   fetchMessageAttachments,
@@ -15,6 +16,8 @@ import {
   GuardedWriter,
   loadClientSecretFile,
   loginInteractive,
+  NotSignedInError,
+  OAuthError,
   parseGmailId,
   rawMessage,
   readMessages,
@@ -23,10 +26,11 @@ import {
   searchThreads,
   sha256Hex,
   summarize,
+  TokenEndpointError,
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
 import type { ReadMessage } from "../lib/body.ts";
-import { basename, join } from "@std/path";
+import { basename, dirname, join } from "@std/path";
 
 export interface Context {
   account?: string;
@@ -38,6 +42,8 @@ export interface Context {
   loopbackPort: number;
   noBrowser: boolean;
   store: FileTokenStore;
+  /** JSON-lines log of sign-in events (logins, refresh failures); never tokens. */
+  authLogPath: string;
 }
 
 export function contextFromEnv(
@@ -60,8 +66,39 @@ export function contextFromEnv(
     loopbackPort: Number(Deno.env.get("GMAIL_API_LOOPBACK_PORT") ?? "8731"),
     noBrowser: Deno.env.get("GMAIL_NO_BROWSER") === "1",
     store: new FileTokenStore({ path: credentialsPath }),
+    authLogPath: Deno.env.get("GMAIL_API_AUTH_LOG") ?? `${home}/.simt/gmail-api/auth.log`,
   };
 }
+
+/**
+ * Append one sign-in event to the auth log (0600), tagged with the grant. Synchronous, so the
+ * line is on disk before an error exits the process. Never throws.
+ */
+export function appendAuthLog(ctx: Pick<Context, "write" | "authLogPath">, e: AuthEvent): void {
+  try {
+    Deno.mkdirSync(dirname(ctx.authLogPath), { recursive: true, mode: 0o700 });
+    const line = JSON.stringify({ ...e, grant: ctx.write ? "write" : "readonly" }) + "\n";
+    Deno.writeTextFileSync(ctx.authLogPath, line, { append: true, mode: 0o600 });
+  } catch {
+    // fallback: an unwritable log never breaks a Gmail command; the error still reaches the user.
+  }
+}
+
+/**
+ * An error's message for this context: "Run login." names the right grant's command, and a
+ * refused or failed refresh points at the auth log.
+ */
+export function errorText(ctx: Pick<Context, "write" | "authLogPath">, e: unknown): string {
+  let text = e instanceof Error ? e.message : String(e);
+  if (ctx.write) text = text.replace(/\bRun login\.$/, "Run login --write.");
+  const refresh = e instanceof TokenEndpointError ||
+    (e instanceof NotSignedInError && e.cause instanceof OAuthError);
+  return refresh ? `${text} Details: ${ctx.authLogPath}` : text;
+}
+
+/** The command that replaces this context's grant. */
+export const loginCommand = (ctx: Pick<Context, "write">): string =>
+  ctx.write ? "login --write" : "login";
 
 function out(ctx: Context, data: unknown, human: () => void): void {
   if (ctx.json) console.log(JSON.stringify(data, null, 2));
@@ -78,6 +115,7 @@ async function client(ctx: Context): Promise<GmailClient> {
     store: ctx.store,
     account: ctx.account,
     log: (l) => console.error(`  ${l}`),
+    onAuthEvent: (e) => appendAuthLog(ctx, e),
   });
 }
 
@@ -90,6 +128,12 @@ export async function login(ctx: Context): Promise<void> {
     openBrowser: ctx.noBrowser ? () => false : undefined,
   });
   await ctx.store.save(cred);
+  appendAuthLog(ctx, {
+    at: new Date().toISOString(),
+    event: "login",
+    account: cred.email,
+    scopes: cred.scope.split(" ").filter(Boolean),
+  });
   out(
     ctx,
     { email: cred.email, scope: cred.scope, store: ctx.credentialsPath },
@@ -108,6 +152,7 @@ export async function logout(ctx: Context): Promise<void> {
   const gmail = await client(ctx);
   const email = await gmail.email();
   const { revoked } = await gmail.logout();
+  appendAuthLog(ctx, { at: new Date().toISOString(), event: "logout", account: email });
   out(ctx, { email, revoked }, () => {
     console.log(
       revoked
@@ -142,8 +187,18 @@ export async function whoami(ctx: Context): Promise<void> {
     ok = true;
   } catch (e) {
     report.mailbox = null;
-    live = `not signed in: ${e instanceof Error ? e.message : String(e)}`;
+    report.error = { name: e instanceof Error ? e.name : typeof e, message: errorText(ctx, e) };
+    live = `not signed in: ${errorText(ctx, e)}`;
   }
+  // Read after the live call, which may have refreshed the token and recorded the outcome.
+  const cred = await ctx.store.load(ctx.account);
+  report.signedInAt = cred?.savedAt ?? null;
+  report.grantAgeDays = cred
+    ? Math.floor((Date.now() - Date.parse(cred.savedAt)) / 86_400_000)
+    : null;
+  report.lastRefreshAt = cred?.lastRefreshAt ?? null;
+  report.lastRefreshError = cred?.lastRefreshError ?? null;
+  report.authLogPath = ctx.authLogPath;
   out(ctx, report, () => {
     console.log(`runtime        ${report.runtime} on ${report.os}`);
     console.log(
@@ -160,6 +215,23 @@ export async function whoami(ctx: Context): Promise<void> {
         (report.defaultAccount ? `  default=${report.defaultAccount}` : ""),
     );
     console.log(`mailbox        ${live}`);
+    if (cred) {
+      console.log(
+        `signed in      ${cred.savedAt} (${report.grantAgeDays} days ago)` +
+          `; last refresh ${cred.lastRefreshAt ?? "not recorded"}`,
+      );
+      const f = cred.lastRefreshError;
+      if (f) {
+        console.log(
+          `last failure   ${f.at} ${f.status ?? "no response"}${f.code ? ` ${f.code}` : ""} — ${
+            f.rejected
+              ? `Google refused the sign-in: run ${loginCommand(ctx)}`
+              : "may pass; retry later"
+          }`,
+        );
+      }
+    }
+    console.log(`auth log       ${ctx.authLogPath}`);
   });
   if (!ok) Deno.exit(2);
 }
