@@ -320,3 +320,19 @@ export interface Draft {
   /** The draft's message (id, threadId, labelIds). */
   message: { id: string; threadId?: string; labelIds?: string[] };
 }
+
+/** One draft in a listing: its ids and the headers that tell drafts apart. */
+export interface DraftSummary {
+  /** Draft id (what update and delete take). */
+  id: string;
+  /** The draft's current message id; it changes on every update. */
+  messageId: string;
+  /** The thread the draft is in. */
+  threadId?: string;
+  /** `Subject`, as written. */
+  subject: string;
+  /** `To`, as written. */
+  to: string;
+  /** `Date`, as written. */
+  date: string;
+}

@@ -4,6 +4,7 @@
  */
 import { GmailClient, GmailWriter, GuardedWriter, MemoryTokenStore } from "../mod.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY, SCOPE_READONLY } from "../mod.ts";
+import { readRaw } from "./mime-read.ts";
 
 export const OWNER = "owner@home.test";
 export const WRITE = `${SCOPE_READONLY} ${SCOPE_MODIFY} ${SCOPE_COMPOSE}`;
@@ -89,6 +90,19 @@ export class FakeGmail {
     return this.calls.filter((c) => c.method !== "GET");
   }
 
+  /** A draft's message as a fixture, from the raw message it was created with. */
+  #draftMessage(messageId: string): FixtureMessage | undefined {
+    const d = [...this.drafts.values()].find((x) => x.message.id === messageId);
+    if (!d) return undefined;
+    const h = readRaw(d.message.raw).headers;
+    const pick = ["subject", "to", "cc", "date", "from"].filter((k) => h[k] !== undefined);
+    return {
+      id: d.message.id,
+      threadId: d.message.threadId ?? `t-${d.id}`,
+      headers: Object.fromEntries(pick.map((k) => [k[0].toUpperCase() + k.slice(1), h[k]])),
+    };
+  }
+
   #payload(m: FixtureMessage, format: string) {
     const headers = Object.entries(m.headers).map(([name, value]) => ({ name, value }));
     if (format === "metadata") return { mimeType: "multipart/mixed", headers };
@@ -153,13 +167,22 @@ export class FakeGmail {
     }
     const msg = path.match(/^\/messages\/([^/]+)$/);
     if (msg && method === "GET") {
-      const m = this.messages.get(decodeURIComponent(msg[1]));
+      const m = this.messages.get(decodeURIComponent(msg[1])) ?? this.#draftMessage(msg[1]);
       if (!m) return json({ error: { code: 404, message: "not found" } }, 404);
       return json({
         id: m.id,
         threadId: m.threadId,
         payload: this.#payload(m, u.searchParams.get("format") ?? "full"),
       });
+    }
+    if (path === "/drafts" && method === "GET") {
+      const q = u.searchParams.get("q");
+      const max = Number(u.searchParams.get("maxResults") ?? 100);
+      const all = [...this.drafts.values()].reverse()
+        .filter((d) => !q || readRaw(d.message.raw).headers["subject"]?.includes(q))
+        .slice(0, max)
+        .map((d) => ({ id: d.id, message: { id: d.message.id, threadId: d.message.threadId } }));
+      return json(all.length ? { drafts: all } : {});
     }
     if (path === "/drafts" && method === "POST") {
       const id = `d${++this.#draftSeq}`;

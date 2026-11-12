@@ -10,12 +10,13 @@ import {
   QUOTE_MAX_CHARS,
   quoteBlock,
   replyAllRecipients,
+  SCOPE_READONLY,
   scrubSignatureHtml,
   signatureBlock,
   splitAddresses,
   textToHtml,
 } from "../mod.ts";
-import { FakeGmail, type FixtureMessage, OWNER } from "./replies-fake.ts";
+import { FakeGmail, type FixtureMessage, OWNER, WRITE } from "./replies-fake.ts";
 import { leaves, readRaw, shape, textOf } from "./mime-read.ts";
 
 const ORIGINAL: FixtureMessage = {
@@ -403,4 +404,28 @@ Deno.test("createDraft signature: the default send-as's, above the quote; none; 
 
   const off = await writer.buildDraft({ to: ["x@away.test"], text: "t" });
   assertEquals(off.signature, "off");
+});
+
+Deno.test("listDrafts: newest first, bounded, filtered, metadata only, on the read grant", async () => {
+  const fake = new FakeGmail([ORIGINAL]);
+  const { writer } = fake.writers();
+  await writer.createDraft({ to: ["a@away.test"], subject: "First", text: "1" });
+  await writer.createDraft({ replyToMessageId: "orig", text: "2", quote: false });
+
+  const reader = fake.client(SCOPE_READONLY);
+  const all = await reader.listDrafts();
+  assertEquals(all.map((d) => [d.id, d.subject, d.to]), [
+    ["d2", "Re: Quote request", "Desk <desk@away.test>"],
+    ["d1", "First", "a@away.test"],
+  ]);
+  assertEquals(all[0].threadId, "t1");
+  assertEquals(all[0].messageId, "m-d2-1");
+  assertEquals(typeof all[0].date, "string", "Date is added by Gmail on save; the fake has none");
+  assertEquals((await reader.listDrafts({ max: 1 })).length, 1);
+  assertEquals((await reader.listDrafts({ q: "First" })).map((d) => d.id), ["d1"]);
+  const reads = fake.calls.filter((c) => c.path.startsWith("/messages/m-d"));
+  assert(reads.length > 0 && reads.every((c) => c.path.includes("format=metadata")));
+  assertEquals(fake.writes().length, 2, "listing writes nothing");
+
+  assertEquals(await new FakeGmail().client(WRITE).listDrafts(), [], "no drafts");
 });
