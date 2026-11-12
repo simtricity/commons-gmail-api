@@ -102,6 +102,13 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   ordinary attachments in `multipart/mixed`. `forwardDraft` copies this threading. Also seen: a
   search on `subject:Fwd` matches replies in a forwarded thread (`Re: Fwd: …`); anchor on the
   prefix to find true forwards.
+- `drafts.update` (`PUT /drafts/{id}`) replaces the draft's whole message: anything not in the
+  new `raw` is gone, so an edit must rebuild every header and carry every file. The draft id
+  stays; the message id changes on every update, which is what `updateDraft` uses to detect an
+  edit made in Gmail meanwhile. `drafts.get` with `format=full` returns the message like
+  `messages.get`. The API's part schema allows a file's bytes inline in `body.data` with no
+  `attachmentId`; not seen on a draft yet, but `carryAttachments` carries both forms so an edit
+  cannot drop one.
 - Quota exhaustion arrives as HTTP 403 with reason `rateLimitExceeded`, not 429. Permission failures
   are also 403 (`insufficientPermissions`); branch on `GmailApiError.reason`. Quota windows are per
   minute, so backoff under ~8 s cannot outlive one; the organiser's quota retries start at 8 s.

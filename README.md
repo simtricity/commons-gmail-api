@@ -151,6 +151,51 @@ unless `--apply`, 25 ids per call, system labels refused outright, and every app
 JSON line to `~/.simt/gmail-api/writes.log`. Vendor quirks (parents not auto-created, 409 on
 duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`.
 
+## Replies, forwards and edits (0.8.0)
+
+Drafts now behave the way Gmail's own compose does. Nothing here can send: every verb writes a
+draft for you to review.
+
+```bash
+# A reply keeps its thread and quotes the original underneath (--no-quote to leave it out)
+deno task cli draft create --reply-to 18c9f0a1b2d3e4f5 --body "Updated quote attached." \
+  --attach quote-v2.pdf --reply-all --signature
+deno task cli drafts --max 5                                  # id, subject, To, date
+deno task cli draft update --draft r-123 --body "Revised: see v3." --attach quote-v3.pdf --remove quote-v2.pdf
+deno task cli draft forward --message 18c9f0a1b2d3e4f5 --to colleague@example.com --body "FYI"
+```
+
+- **Quoted history.** A reply carries `On <date>, <sender> wrote:` and the original, inside
+  Gmail's own quote markup, so Gmail folds it as usual. The quote is the original's text, made
+  safe for HTML: none of its HTML, scripts or images come along.
+- **Reply-all** (`replyAll: true`) addresses everyone on the original except you: your address
+  and every send-as alias are left out, Bcc is never filled in, a given `to` replaces the
+  computed one and a given `cc` is added to it.
+- **Signature** (`signature: true`) is your send-as signature from Gmail settings, placed above the
+  quote. Scripts, styles, event handlers and `javascript:` links are stripped; images are kept.
+- **HTML bodies.** `html` is sent as given, with `text` as its plain alternative.
+- **Forward** (`forwardDraft`) writes Gmail's forwarded-message block, keeps the original's thread
+  and carries its files (`attachments: "all" | "none" | [names]`). Inline images are reported in
+  `skippedInline`, not carried. Recipients are yours only.
+- **Edit** (`updateDraft`): anything not given is kept: recipients, subject, thread, body and every
+  file, byte for byte (the result lists each kept file's sha256). A changed body regenerates the
+  quote rather than parsing the old one. Drafts holding inline images are refused
+  (`DraftNotEditableError`), and so is a draft edited in Gmail since you read it
+  (`DraftChangedError`), so an edit never silently loses anything.
+
+```ts
+const g = new GuardedWriter(new GmailWriter(gmail), { log: { path: logPath, via: "my-tool" } });
+const r = await g.createDraft({ replyToMessageId: id, text: "Thanks.", replyAll: true, signature: true });
+r.recipients; // { to, cc, bcc } exactly as written; also r.quoted, r.signature
+await g.updateDraft({ draftId: r.draft.id, text: "Thanks, both attached.", addAttachments: [file] });
+await g.forwardDraft({ messageId: id, to: ["colleague@example.com"], text: "FYI" });
+const drafts = await gmail.listDrafts({ max: 10 });
+```
+
+Files over Gmail's 25 MB limit are refused with `AttachmentLimitError` before anything is
+downloaded or written. The write log records recipient counts and file hashes, never addresses
+or filenames.
+
 ## Organising a mailbox (0.7.0)
 
 `@simtricity-commons/gmail-api/organise` sorts received mail into labels. Each message is decided
