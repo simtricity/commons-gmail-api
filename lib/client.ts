@@ -18,6 +18,7 @@ import type {
   MessageListResponse,
   OAuthCredential,
   Profile,
+  SendAs,
   Thread,
   TokenStore,
 } from "./types.ts";
@@ -174,6 +175,11 @@ export class GmailClient {
   /** The signed-in mailbox's profile: address and message/thread counts. */
   profile(): Promise<Profile> {
     return this.get<Profile>("/profile");
+  }
+
+  /** The mailbox's send-as addresses: the primary and any aliases, with their signatures. */
+  listSendAs(): Promise<SendAs[]> {
+    return this.get<{ sendAs?: SendAs[] }>("/settings/sendAs").then((r) => r.sendAs ?? []);
   }
 
   /** All labels visible to the mailbox. */

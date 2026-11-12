@@ -132,6 +132,22 @@ export interface Profile {
   historyId: string;
 }
 
+/** A send-as address, from `users.settings.sendAs.list`: the primary address and any aliases. */
+export interface SendAs {
+  /** The address mail is sent from. */
+  sendAsEmail: string;
+  /** The display name used with it. */
+  displayName?: string;
+  /** Reply-To set for this address, if any. */
+  replyToAddress?: string;
+  /** The signature, as HTML, from the account holder's Gmail settings. */
+  signature?: string;
+  /** True for the account's own address. */
+  isPrimary?: boolean;
+  /** True for the address new mail is sent from by default. */
+  isDefault?: boolean;
+}
+
 /** A Gmail label as returned by `users.labels.get`/`list`. */
 export interface Label {
   /** Label id, e.g. `INBOX` or `Label_12`. */
@@ -235,7 +251,7 @@ export interface LabelChange {
   allowSystem?: boolean;
 }
 
-/** Input for a new draft. Plain text only in this release. */
+/** Input for a new draft: text, optionally HTML, files, and a reply's thread and quote. */
 export interface DraftInput {
   /** Recipients. Optional when replying: defaults to the original's Reply-To or From. */
   to?: string[];
@@ -259,6 +275,12 @@ export interface DraftInput {
    * otherwise. The quote is the original's text, escaped: never its HTML.
    */
   quote?: boolean;
+  /**
+   * Reply to everyone on the original, as Gmail does: needs `replyToMessageId`. Your own
+   * addresses (the profile and every send-as) are left out, Bcc is never computed, a given `to`
+   * replaces the computed one and a given `cc` is added to it.
+   */
+  replyAll?: boolean;
   /** Files to attach, as bytes. The library never reads paths; callers load the files. */
   attachments?: DraftAttachment[];
 }

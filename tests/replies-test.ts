@@ -9,9 +9,11 @@ import {
   escapeHtml,
   QUOTE_MAX_CHARS,
   quoteBlock,
+  replyAllRecipients,
+  splitAddresses,
   textToHtml,
 } from "../mod.ts";
-import { FakeGmail, type FixtureMessage } from "./replies-fake.ts";
+import { FakeGmail, type FixtureMessage, OWNER } from "./replies-fake.ts";
 import { leaves, readRaw, shape, textOf } from "./mime-read.ts";
 
 const ORIGINAL: FixtureMessage = {
@@ -235,4 +237,97 @@ Deno.test("quote is ignored on a new draft", async () => {
   });
   assertEquals(plan.quoted, false);
   assertEquals(shape(readRaw(plan.message.raw)), "text/plain");
+});
+
+Deno.test("recipients: address lists split on commas outside quotes, brackets and comments", () => {
+  assertEquals(
+    splitAddresses(`"Doe, Jo" <jo@x.test>, b@y.test,(c, d) c@z.test , <e@w.test>`),
+    ['"Doe, Jo" <jo@x.test>', "b@y.test", "(c, d) c@z.test", "<e@w.test>"],
+  );
+  assertEquals(splitAddresses(undefined), []);
+  assertEquals(splitAddresses(`"a \\"q, r\\"" <a@x.test>`), [`"a \\"q, r\\"" <a@x.test>`]);
+});
+
+Deno.test("reply-all: from someone else, self removed, cc never repeats to", () => {
+  const self = new Set([OWNER, "alias@home.test"]);
+  const r = replyAllRecipients({
+    from: "Sender Name <sender@away.test>",
+    to: `Owner <OWNER@home.test>, "Doe, Jo" <jo@away.test>, sender@away.test`,
+    cc: "alias@home.test, Kim <kim@away.test>, jo@away.test",
+  }, self);
+  assertEquals(r, {
+    to: ["Sender Name <sender@away.test>"],
+    cc: ['"Doe, Jo" <jo@away.test>', "Kim <kim@away.test>"],
+  });
+  assertEquals(
+    replyAllRecipients({ from: "s@away.test", replyTo: "Desk <desk@away.test>", to: OWNER }, self),
+    { to: ["Desk <desk@away.test>"], cc: [] },
+    "Reply-To wins over From",
+  );
+});
+
+Deno.test("reply-all: from yourself, to and cc are the original's, minus you", () => {
+  const self = new Set([OWNER, "alias@home.test"]);
+  assertEquals(
+    replyAllRecipients({
+      from: "Me <alias@home.test>",
+      to: "a@away.test, owner@home.test",
+      cc: "b@away.test, Alias <ALIAS@home.test>, a@away.test",
+    }, self),
+    { to: ["a@away.test"], cc: ["b@away.test"] },
+  );
+});
+
+const GROUP: FixtureMessage = {
+  ...ORIGINAL,
+  headers: {
+    ...ORIGINAL.headers,
+    "Reply-To": "",
+    "To": `${OWNER}, Jo <jo@away.test>`,
+    "Cc": "Kim <kim@away.test>, alias@home.test",
+  },
+};
+
+Deno.test("createDraft replyAll: computed recipients, caller to replaces, caller cc adds, no bcc", async () => {
+  const fake = new FakeGmail([GROUP]);
+  fake.sendAs.push({ sendAsEmail: "alias@home.test" });
+  const { writer } = fake.writers();
+
+  const p = await writer.buildDraft({ replyToMessageId: "orig", text: "all", replyAll: true });
+  assertEquals(p.recipients, {
+    to: ["Sender Name <sender@away.test>"],
+    cc: ["Jo <jo@away.test>", "Kim <kim@away.test>"],
+    bcc: [],
+  });
+  const m = readRaw(p.message.raw);
+  assertEquals(m.headers["cc"], "Jo <jo@away.test>, Kim <kim@away.test>");
+  assertEquals(m.headers["bcc"], undefined, "Bcc is never computed");
+
+  const p2 = await writer.buildDraft({
+    replyToMessageId: "orig",
+    text: "x",
+    replyAll: true,
+    to: ["jo@away.test"],
+    cc: ["new@away.test", "kim@away.test"],
+  });
+  assertEquals(p2.recipients.to, ["jo@away.test"]);
+  assertEquals(p2.recipients.cc, ["Kim <kim@away.test>", "new@away.test"]);
+
+  const sendAsReads = () => fake.calls.filter((c) => c.path.includes("sendAs")).length;
+  const before = sendAsReads();
+  const plain = await writer.buildDraft({ replyToMessageId: "orig", text: "x", quote: false });
+  assertEquals(plain.recipients, { to: ["Sender Name <sender@away.test>"], cc: [], bcc: [] });
+  assertEquals(sendAsReads(), before, "a plain reply reads no send-as");
+});
+
+Deno.test("createDraft replyAll without replyToMessageId is a TypeError before any call", async () => {
+  const fake = new FakeGmail();
+  let err: unknown;
+  try {
+    await fake.writers().writer.createDraft({ to: ["x@away.test"], text: "x", replyAll: true });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof TypeError);
+  assertEquals(fake.calls.length, 0);
 });

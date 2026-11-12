@@ -12,6 +12,7 @@
 
 import { bodyText } from "./body.ts";
 import { type BodyTail, composeBody, quoteBlock } from "./compose.ts";
+import { addRecipients, bareAddress, replyAllRecipients, splitAddresses } from "./recipients.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
 import { GmailApiError, InsufficientScopeError } from "./errors.ts";
@@ -189,6 +190,17 @@ export class GmailWriter {
     );
   }
 
+  /**
+   * The account holder's own addresses, bare and lower-cased: the profile address and every
+   * send-as. Reply-all leaves these out.
+   */
+  async selfAddresses(): Promise<Set<string>> {
+    const [profile, sendAs] = await Promise.all([this.client.profile(), this.client.listSendAs()]);
+    return new Set(
+      [profile.emailAddress, ...sendAs.map((s) => s.sendAsEmail)].map(bareAddress).filter(Boolean),
+    );
+  }
+
   // ── Drafts ─────────────────────────────────────────────────────────────────
 
   /**
@@ -208,6 +220,9 @@ export class GmailWriter {
    * what went into it. Writes nothing. Needs the compose grant, like the write it prepares.
    */
   async buildDraft(input: DraftInput): Promise<DraftPlan> {
+    if (input.replyAll && !input.replyToMessageId) {
+      throw new TypeError("createDraft: replyAll needs replyToMessageId");
+    }
     const attachBytes = (input.attachments ?? []).reduce((n, a) => n + a.content.length, 0);
     if (attachBytes > MAX_ATTACHMENT_BYTES) {
       throw new Error(
@@ -216,6 +231,8 @@ export class GmailWriter {
     }
     await this.requireScope(SCOPE_COMPOSE);
     let to = input.to ?? [];
+    let cc = input.cc ?? [];
+    const bcc = input.bcc ?? [];
     let subject = input.subject;
     let inReplyTo: string | undefined;
     let references: string[] | undefined;
@@ -232,9 +249,17 @@ export class GmailWriter {
       inReplyTo = msgId;
       const prior = header(orig.payload, "References")?.split(/\s+/).filter(Boolean) ?? [];
       references = msgId ? [...prior, msgId] : prior;
-      if (!to.length) {
-        const rt = header(orig.payload, "Reply-To") ?? header(orig.payload, "From");
-        if (rt) to = [rt];
+      if (input.replyAll) {
+        const all = replyAllRecipients({
+          from: header(orig.payload, "From"),
+          replyTo: header(orig.payload, "Reply-To"),
+          to: header(orig.payload, "To"),
+          cc: header(orig.payload, "Cc"),
+        }, await this.selfAddresses());
+        if (!input.to?.length) to = all.to;
+        cc = addRecipients([], [...all.cc, ...(input.cc ?? [])], to);
+      } else if (!to.length) {
+        to = splitAddresses(header(orig.payload, "Reply-To") || header(orig.payload, "From"));
       }
       if (!subject) {
         const s = header(orig.payload, "Subject") ?? "";
@@ -249,8 +274,6 @@ export class GmailWriter {
       }
     }
     if (!to.length) throw new Error("createDraft: no recipients (pass `to` or a replyToMessageId)");
-    const cc = input.cc ?? [];
-    const bcc = input.bcc ?? [];
     const raw = buildRawMessage({
       to,
       cc,
