@@ -23,6 +23,8 @@ import type {
   ForwardInput,
   ForwardPlan,
   Label,
+  UpdateDraftInput,
+  UpdatePlan,
 } from "./types.ts";
 import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
@@ -121,6 +123,32 @@ export interface ForwardDraftResult {
   skippedInline: number;
   /** `added`, `none` or `off`, as for a new draft. */
   signature: ForwardPlan["signature"];
+}
+
+/** Outcome of {@link GuardedWriter.updateDraft}. */
+export interface UpdateDraftResult {
+  /** The draft as Gmail returned it: same draft id, new message id. */
+  draft: Draft;
+  /** Link that opens the draft in Gmail's web UI. */
+  url: string;
+  /** Always false: this package cannot send. */
+  sent: false;
+  /** The message id before the edit. */
+  previousMessageId: string;
+  /** Every recipient, exactly as written into the message. */
+  recipients: UpdatePlan["recipients"];
+  /** `kept` or `rebuilt`. */
+  body: UpdatePlan["body"];
+  /** Files kept, with sha256: the same bytes as before the edit. */
+  kept: UpdatePlan["kept"];
+  /** Files added. */
+  added: number;
+  /** Files removed. */
+  removed: number;
+  /** True when the body holds a quote of the original. */
+  quoted: boolean;
+  /** As in {@link UpdatePlan.signature}. */
+  signature: UpdatePlan["signature"];
 }
 
 /** A guard refused the request. Nothing was sent to Gmail. */
@@ -357,6 +385,44 @@ export class GuardedWriter {
       recipients: plan.recipients,
       carried: plan.carried,
       skippedInline: plan.skippedInline,
+      signature: plan.signature,
+    };
+  }
+
+  /**
+   * Edit a draft, keeping everything not given (recipients, subject, thread, body, files). Refuses
+   * rather than loses (inline images, unreadable files) and refuses a draft edited elsewhere since
+   * it was read. Logs counts, kept sha256 and the ids, never names or addresses. Never sends.
+   */
+  async updateDraft(input: UpdateDraftInput): Promise<UpdateDraftResult> {
+    const plan = await this.writer.buildUpdate(input);
+    const draft = await this.writer.putDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
+    await this.record({
+      op: "draft.update",
+      draftId: draft.id,
+      messageId: draft.message.id,
+      previousMessageId: plan.previousMessageId,
+      threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      body: plan.body,
+      kept: plan.kept,
+      added: plan.added,
+      removed: plan.removed,
+      quoted: plan.quoted,
+      signature: plan.signature,
+    });
+    return {
+      draft,
+      url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
+      sent: false,
+      previousMessageId: plan.previousMessageId,
+      recipients: plan.recipients,
+      body: plan.body,
+      kept: plan.kept,
+      added: plan.added,
+      removed: plan.removed,
+      quoted: plan.quoted,
       signature: plan.signature,
     };
   }

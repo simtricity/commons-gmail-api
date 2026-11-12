@@ -8,6 +8,8 @@ import {
   buildRawMessage,
   carryAttachments,
   composeBody,
+  DraftChangedError,
+  DraftNotEditableError,
   escapeHtml,
   FORWARD_MARKER,
   forwardBlock,
@@ -697,4 +699,237 @@ Deno.test("guard forwardDraft: result, and a log line with counts and sha256 onl
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+const FILE_A = { filename: "a.pdf", content: bytes(37, 80, 68, 70, 1, 2, 3) };
+const FILE_B = { filename: "b.xlsx", content: bytes(80, 75, 3, 4, 9) };
+
+/** sha256 of every attached file in a raw message, in order. */
+const fileHashes = (raw: string) =>
+  Promise.all(
+    leaves(readRaw(raw))
+      .filter((l) => l.headers["content-disposition"]?.startsWith("attachment"))
+      .map((l) => sha256Hex(l.body)),
+  );
+
+/** A fake holding ORIGINAL and one reply draft "d1" with two files, quoted. */
+async function replyDraft() {
+  const fake = new FakeGmail([ORIGINAL]);
+  const { writer, guard } = fake.writers();
+  await writer.createDraft({
+    replyToMessageId: "orig",
+    text: "First version.",
+    replyAll: true,
+    bcc: ["hidden@away.test"],
+    attachments: [FILE_A, FILE_B],
+  });
+  const raw = fake.drafts.get("d1")!.message.raw!;
+  return { fake, writer, guard, raw };
+}
+
+Deno.test("updateDraft with nothing given keeps everything: headers, body parts, files", async () => {
+  const { fake, writer, raw } = await replyDraft();
+  const plan = await writer.buildUpdate({ draftId: "d1" });
+  assertEquals(plan.body, "kept");
+  const [a, b] = [readRaw(raw), readRaw(plan.message.raw)];
+  for (const k of ["to", "cc", "bcc", "subject", "in-reply-to", "references"]) {
+    assertEquals(b.headers[k], a.headers[k], k);
+  }
+  assertEquals(plan.message.threadId, "t1");
+  assertEquals(textOf(b, "text/plain"), textOf(a, "text/plain"), "text part identical");
+  assertEquals(textOf(b, "text/html"), textOf(a, "text/html"), "HTML part identical");
+  assertEquals(shape(b), shape(a));
+  assertEquals(plan.kept.sha256, await fileHashes(raw));
+  assertEquals(
+    await fileHashes(plan.message.raw),
+    await fileHashes(raw),
+    "every file byte-identical",
+  );
+  assertEquals([plan.kept.count, plan.added, plan.removed, plan.quoted], [2, 0, 0, true]);
+  assertEquals(fake.writes().length, 1, "buildUpdate writes nothing");
+});
+
+Deno.test("updateDraft text change: new text, quote regenerated from the thread, files kept", async () => {
+  const { fake, guard, raw } = await replyDraft();
+  const before = await fileHashes(raw);
+  const r = await guard.updateDraft({ draftId: "d1", text: "Second version." });
+  assertEquals([r.body, r.quoted, r.draft.id, r.previousMessageId], [
+    "rebuilt",
+    true,
+    "d1",
+    "m-d1-1",
+  ]);
+  assertEquals(r.draft.message.id, "m-d1-2", "same draft, new message id");
+  const now = fake.drafts.get("d1")!.message.raw!;
+  const t = textOf(readRaw(now), "text/plain")!;
+  assert(t.startsWith("Second version.\n\nOn Tue, 10 Nov 2026"), t);
+  assert(!t.includes("First version."), "old text replaced, not kept above the new");
+  assertEquals(t.split("> Please send the quote.").length, 2, "one quote, not two");
+  assertEquals(await fileHashes(now), before, "sha256 of every kept file equal before and after");
+  const m = readRaw(now);
+  assertEquals(m.headers["in-reply-to"], "<m2@away.test>");
+  assertEquals(m.headers["references"], "<m1@away.test> <m2@away.test>");
+  assertEquals(m.headers["bcc"], "hidden@away.test");
+  assertEquals(fake.drafts.get("d1")!.message.threadId, "t1");
+  const put = fake.writes().at(-1)!;
+  assertEquals([put.method, put.path], ["PUT", "/drafts/d1"]);
+});
+
+Deno.test("updateDraft: quote:false, and no quote when the original is not in the thread", async () => {
+  const { writer } = await replyDraft();
+  const p = await writer.buildUpdate({ draftId: "d1", text: "x", quote: false });
+  assertEquals([p.quoted, shape(readRaw(p.message.raw)).startsWith("multipart/mixed[text/plain")], [
+    false,
+    true,
+  ]);
+
+  const fake = new FakeGmail([ORIGINAL]);
+  fake.seedDraft("d9", {
+    id: "m-d9-1",
+    threadId: "t1",
+    headers: { "To": "a@away.test", "Subject": "Re: ?", "In-Reply-To": "<gone@away.test>" },
+    text: "old",
+  });
+  const lost = await fake.writers().writer.buildUpdate({ draftId: "d9", text: "new" });
+  assertEquals(lost.quoted, false, "never guess an original");
+  assertEquals(textOf(readRaw(lost.message.raw), "text/plain"), "new");
+});
+
+Deno.test("updateDraft: add and remove files; removing an unknown name writes nothing", async () => {
+  const { fake, writer, raw } = await replyDraft();
+  const [hashA] = await fileHashes(raw);
+  const p = await writer.buildUpdate({
+    draftId: "d1",
+    removeAttachments: ["b.xlsx"],
+    addAttachments: [{ filename: "c.txt", content: bytes(99) }],
+  });
+  const names = leaves(readRaw(p.message.raw))
+    .filter((l) => l.headers["content-disposition"]?.startsWith("attachment"))
+    .map((l) => /filename="([^"]+)"/.exec(l.headers["content-disposition"])![1]);
+  assertEquals(names, ["a.pdf", "c.txt"]);
+  assertEquals(p.kept.sha256, [hashA]);
+  assertEquals([p.kept.count, p.added, p.removed], [1, 1, 1]);
+
+  let err: unknown;
+  try {
+    await writer.buildUpdate({ draftId: "d1", removeAttachments: ["nope.doc"] });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof TypeError && err.message.includes("nope.doc"));
+  assertEquals(fake.writes().length, 1, "only the original create");
+});
+
+Deno.test("updateDraft refuses drafts with inline images, and unreadable files; nothing written", async () => {
+  const fake = new FakeGmail([ORIGINAL]);
+  fake.seedDraft("d7", {
+    id: "m-d7-1",
+    threadId: "t1",
+    headers: { "To": "a@away.test", "Subject": "S" },
+    html: '<p>see <img src="cid:img0@fake"></p>',
+    files: [{ filename: "shot.png", mimeType: "image/png", bytes: bytes(1, 2), inline: true }],
+  });
+  const { guard } = fake.writers();
+  let err: unknown;
+  try {
+    await guard.updateDraft({ draftId: "d7", text: "edit" });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof DraftNotEditableError && err.reason === "inline_parts", String(err));
+  assertEquals(err.draftId, "d7");
+
+  const { fake: f2, guard: g2 } = await replyDraft();
+  f2.failDownloads = true;
+  let err2: unknown;
+  try {
+    await g2.updateDraft({ draftId: "d1", text: "edit" });
+  } catch (e) {
+    err2 = e;
+  }
+  assert(err2 instanceof DraftNotEditableError && err2.reason === "download_failed", String(err2));
+  assertEquals(fake.writes().length + f2.writes().length, 1, "no PUT in either case");
+});
+
+Deno.test("updateDraft refuses a draft edited elsewhere: expectMessageId, and the re-read before the write", async () => {
+  const { fake, writer } = await replyDraft();
+  let err: unknown;
+  try {
+    await writer.buildUpdate({ draftId: "d1", text: "x", expectMessageId: "m-stale" });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof DraftChangedError);
+  assertEquals([err.expected, err.actual], ["m-stale", "m-d1-1"]);
+
+  const plan = await writer.buildUpdate({ draftId: "d1", text: "x", expectMessageId: "m-d1-1" });
+  fake.touchDraft("d1"); // someone edits it in Gmail between our read and our write
+  let err2: unknown;
+  try {
+    await writer.putDraft(plan);
+  } catch (e) {
+    err2 = e;
+  }
+  assert(err2 instanceof DraftChangedError, String(err2));
+  assertEquals(fake.writes().filter((w) => w.method === "PUT").length, 0);
+});
+
+Deno.test("guard updateDraft: result and a log line with counts and sha256 only", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const log = `${dir}/writes.log`;
+    const fake = new FakeGmail([ORIGINAL]);
+    const { writer, guard } = fake.writers(log);
+    await writer.createDraft({ replyToMessageId: "orig", text: "v1", attachments: [FILE_A] });
+    const r = await guard.updateDraft({ draftId: "d1", text: "v2", cc: ["new@away.test"] });
+    assertEquals(r.sent, false);
+    assertEquals(r.recipients.cc, ["new@away.test"], "a given cc replaces the old one whole");
+    const text = await Deno.readTextFile(log);
+    const line = JSON.parse(text.trim().split("\n").at(-1)!);
+    assertEquals(line.op, "draft.update");
+    assertEquals(line.recipients, { to: 1, cc: 1, bcc: 0 });
+    assertEquals(line.kept.sha256, [await sha256Hex(FILE_A.content)]);
+    assertEquals([line.previousMessageId, line.messageId], ["m-d1-1", "m-d1-2"]);
+    for (const leak of ["away.test", "a.pdf", "Quote"]) assert(!text.includes(leak), leak);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("one composer: create, update and forward give identical bodies for identical input", async () => {
+  const fake = new FakeGmail([ORIGINAL]);
+  fake.sendAs = [{ sendAsEmail: OWNER, isDefault: true, signature: "<b>Sig</b>" }];
+  const { writer } = fake.writers();
+  const created = await writer.buildDraft({
+    to: ["x@away.test"],
+    subject: "S",
+    text: "Body",
+    signature: true,
+  });
+  await writer.createDraft({ to: ["x@away.test"], subject: "S", text: "old" });
+  const updated = await writer.buildUpdate({ draftId: "d1", text: "Body", signature: true });
+  const want = composeBody({ text: "Body", signature: signatureBlock("<b>Sig</b>") });
+  for (const p of [created, updated]) {
+    const m = readRaw(p.message.raw);
+    assertEquals([textOf(m, "text/plain"), textOf(m, "text/html")], [want.text, want.html]);
+  }
+  const fwd = await writer.buildForward({
+    messageId: "orig",
+    to: ["x@away.test"],
+    text: "Body",
+    signature: true,
+  });
+  const fm = readRaw(fwd.message.raw);
+  const wantF = composeBody({
+    text: "Body",
+    signature: signatureBlock("<b>Sig</b>"),
+    tail: forwardBlock({
+      from: ORIGINAL.headers["From"],
+      date: ORIGINAL.headers["Date"],
+      subject: ORIGINAL.headers["Subject"],
+      to: ORIGINAL.headers["To"],
+      text: ORIGINAL.text!,
+    }),
+  });
+  assertEquals([textOf(fm, "text/plain"), textOf(fm, "text/html")], [wantF.text, wantF.html]);
 });

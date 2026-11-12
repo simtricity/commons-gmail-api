@@ -351,6 +351,61 @@ export interface ForwardPlan {
   signature: "added" | "none" | "off";
 }
 
+/** Input for editing a draft. Anything not given is kept. */
+export interface UpdateDraftInput {
+  /** The draft to edit (its draft id, not its message id). */
+  draftId: string;
+  /** New text: replaces your text above any quote. With neither text nor html, the body is kept. */
+  text?: string;
+  /** New HTML body, sent as given. */
+  html?: string;
+  /** New subject. */
+  subject?: string;
+  /** New To, replacing the old one whole. */
+  to?: string[];
+  /** New Cc, replacing the old one whole. */
+  cc?: string[];
+  /** New Bcc, replacing the old one whole. */
+  bcc?: string[];
+  /** Files to add. */
+  addAttachments?: DraftAttachment[];
+  /** Files to remove, by exact filename; an unknown name throws before any write. */
+  removeAttachments?: string[];
+  /**
+   * When the body is rebuilt and the draft is a reply: regenerate the quote from the original
+   * (default true). Old quote text is never parsed back out of the draft.
+   */
+  quote?: boolean;
+  /** When the body is rebuilt: add the signature. Default: whether the draft had one. */
+  signature?: boolean;
+  /** Refuse with `DraftChangedError` unless the draft's message id is still this. */
+  expectMessageId?: string;
+}
+
+/** An edit built but not yet written. */
+export interface UpdatePlan {
+  /** The draft being edited. */
+  draftId: string;
+  /** Its message id when read; checked again just before the write. */
+  previousMessageId: string;
+  /** The `message` resource to put. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** `kept`: the old text and HTML parts as they were; `rebuilt`: through the composer. */
+  body: "kept" | "rebuilt";
+  /** Files kept from the draft, with their sha256 (equal before and after). */
+  kept: { count: number; sha256: string[] };
+  /** Files added. */
+  added: number;
+  /** Files removed. */
+  removed: number;
+  /** True when the draft's body holds a quote of the original. */
+  quoted: boolean;
+  /** `added` or `none` when a rebuild asked for one; `off` otherwise; `added` when a kept body has one. */
+  signature: "added" | "none" | "off";
+}
+
 /** A file attached to a draft. */
 export interface DraftAttachment {
   /** Filename shown to the recipient. */

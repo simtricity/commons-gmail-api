@@ -178,6 +178,13 @@ export class GmailClient {
     return this.get<Profile>("/profile");
   }
 
+  /** One draft, with its message in `format` (default `full`). */
+  getDraft(id: string, format: MessageFormat = "full"): Promise<{ id: string; message: Message }> {
+    return this.get<{ id: string; message: Message }>(
+      `/drafts/${encodeURIComponent(id)}?format=${format}`,
+    );
+  }
+
   /** The mailbox's send-as addresses: the primary and any aliases, with their signatures. */
   listSendAs(): Promise<SendAs[]> {
     return this.get<{ sendAs?: SendAs[] }>("/settings/sendAs").then((r) => r.sendAs ?? []);

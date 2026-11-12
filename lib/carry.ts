@@ -133,3 +133,25 @@ export async function carryAttachments(
     totalBytes,
   };
 }
+
+/**
+ * A message's own body: the first `text/plain` and `text/html` parts that are not files, decoded.
+ * Used to keep a draft's body exactly when an edit does not change it.
+ */
+export function existingBody(msg: Message): { text?: string; html?: string } {
+  const out: { text?: string; html?: string } = {};
+  const dec = (data?: string) => new TextDecoder().decode(decodeBase64Url(data ?? ""));
+  const walk = (part?: MessagePart) => {
+    if (!part) return;
+    const isFile = !!part.filename || !!header(part, "content-disposition");
+    if (!isFile && part.mimeType === "text/plain" && out.text === undefined) {
+      out.text = dec(part.body?.data);
+    }
+    if (!isFile && part.mimeType === "text/html" && out.html === undefined) {
+      out.html = dec(part.body?.data);
+    }
+    for (const child of part.parts ?? []) walk(child);
+  };
+  walk(msg.payload);
+  return out;
+}

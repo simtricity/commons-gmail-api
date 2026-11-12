@@ -82,3 +82,46 @@ export class AttachmentLimitError extends Error {
     super(`attachments total ${totalBytes} bytes; Gmail's limit is ${limit}`);
   }
 }
+
+/**
+ * A draft cannot be edited without losing something the user put in it. Nothing was written.
+ * `inline_parts`: it holds inline images, which this release does not carry. `download_failed`:
+ * one of its files could not be read back.
+ */
+export class DraftNotEditableError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "DraftNotEditableError";
+  /**
+   * Build with the draft and the reason.
+   * @param draftId The draft refused.
+   * @param reason Why: `inline_parts` or `download_failed`.
+   * @param options Standard error options; `cause` carries a failed download's error.
+   */
+  constructor(
+    readonly draftId: string,
+    readonly reason: "inline_parts" | "download_failed",
+    options?: ErrorOptions,
+  ) {
+    super(
+      reason === "inline_parts"
+        ? `draft ${draftId} has inline images; editing it would drop them, so it was left unchanged`
+        : `a file on draft ${draftId} could not be read back; it was left unchanged`,
+      options,
+    );
+  }
+}
+
+/** The draft changed in Gmail since it was read (its message id moved). Nothing was written. */
+export class DraftChangedError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "DraftChangedError";
+  /**
+   * Build with the ids compared.
+   * @param draftId The draft.
+   * @param expected The message id the caller read.
+   * @param actual The draft's message id now.
+   */
+  constructor(readonly draftId: string, readonly expected: string, readonly actual: string) {
+    super(`draft ${draftId} changed since it was read (message ${expected} is now ${actual})`);
+  }
+}

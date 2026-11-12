@@ -41,6 +41,11 @@
  *                [--body-file <path>] [--html-file <path>] [--files all|none|a.pdf,b.xlsx]
  *                [--signature]   Forwards as Gmail does (Fwd:, the original's thread and
  *                files); inline images are reported, not carried. Creates a draft only.
+ *   draft update --draft <draftId> [--body TEXT | --body-file <path>] [--html-file <path>]
+ *                [--subject S] [--to a@b]... [--cc a@b]... [--bcc a@b]... [--attach <path>]...
+ *                [--remove a.pdf,b.xlsx] [--no-quote] [--signature] [--expect-message <msgId>]
+ *                Anything not given is kept: recipients, subject, thread, body, files. Refuses
+ *                drafts with inline images and drafts edited elsewhere since they were read.
  *   drafts       [--max N] [-q <query>]          List drafts: id, subject, To, date
  *
  *   organise <verb> ...                           Sort a mailbox into labels with a decision
@@ -86,6 +91,9 @@ const args = parseArgs(Deno.args, {
     "days",
     "html-file",
     "files",
+    "draft",
+    "remove",
+    "expect-message",
   ],
   collect: ["include", "filename", "to", "cc", "bcc", "attach"],
   boolean: [
@@ -132,6 +140,9 @@ Commands:
                [--signature] your send-as signature, above the quote
   draft forward --message <id> --to <a> [--cc <a>]... [--bcc <a>]... [--body <t>]       [write]
                [--files all|none|<name>,<name>] (default all) [--signature]
+  draft update --draft <id> [--body <t>] [--subject <s>] [--to|--cc|--bcc <a>]...     [write]
+               [--attach <path>]... [--remove <name>,<name>] [--no-quote] [--signature]
+               [--expect-message <msgId>]   anything not given is kept
   drafts       [--max N] [-q <query>]          List drafts (newest first; default 20)
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
@@ -279,7 +290,32 @@ try {
         });
         break;
       }
-      if (sub !== "create") throw new Error("draft needs a subcommand: create | forward");
+      if (sub === "update") {
+        if (!args.draft) throw new Error("draft update needs --draft <draftId>");
+        if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
+        const list = (k: "to" | "cc" | "bcc") => (args[k] as string[] | undefined)?.map(String);
+        await commands.draftUpdate(ctx, {
+          draftId: args.draft,
+          to: list("to"),
+          cc: list("cc"),
+          bcc: list("bcc"),
+          subject: args.subject,
+          text: args.body ??
+            (args["body-file"] ? await Deno.readTextFile(args["body-file"]) : undefined),
+          html: args["html-file"] ? await Deno.readTextFile(args["html-file"]) : undefined,
+          attach: (args.attach as string[] | undefined)?.map(String),
+          remove: args.remove
+            ? String(args.remove).split(",").map((x) => x.trim()).filter(Boolean)
+            : undefined,
+          // --no-quote only matters when the body is rebuilt
+          quote: args.quote,
+          // absent means "as the draft had it", which a boolean flag's false cannot say
+          signature: Deno.args.includes("--signature") ? true : undefined,
+          expectMessageId: args["expect-message"],
+        });
+        break;
+      }
+      if (sub !== "create") throw new Error("draft needs a subcommand: create | forward | update");
       if (!args.body && !args["body-file"]) {
         throw new Error("draft create needs --body <text> or --body-file <path>");
       }

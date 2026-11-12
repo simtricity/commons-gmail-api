@@ -426,6 +426,61 @@ export async function draftForward(
   });
 }
 
+export async function draftUpdate(
+  ctx: Context,
+  opts: {
+    draftId: string;
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject?: string;
+    text?: string;
+    html?: string;
+    attach?: string[];
+    remove?: string[];
+    quote?: boolean;
+    signature?: boolean;
+    expectMessageId?: string;
+  },
+): Promise<void> {
+  // Files are read here, not in lib/: the library takes bytes and never touches paths.
+  const add = await Promise.all(
+    (opts.attach ?? []).map(async (p) => ({
+      filename: basename(p),
+      content: await Deno.readFile(p),
+    })),
+  );
+  const g = await guarded(ctx);
+  // Pass the message id read now, so an edit made in Gmail meanwhile is refused, not overwritten.
+  const expectMessageId = opts.expectMessageId ??
+    (await g.writer.client.getDraft(opts.draftId, "minimal")).message.id;
+  const r = await g.updateDraft({
+    draftId: opts.draftId,
+    to: opts.to,
+    cc: opts.cc,
+    bcc: opts.bcc,
+    subject: opts.subject,
+    text: opts.text,
+    html: opts.html,
+    addAttachments: add.length ? add : undefined,
+    removeAttachments: opts.remove,
+    quote: opts.quote,
+    signature: opts.signature,
+    expectMessageId,
+  });
+  out(ctx, r, () => {
+    console.log(
+      `draft ${r.draft.id} updated (message ${r.previousMessageId} → ${r.draft.message.id}). Not sent.`,
+    );
+    printRecipients(r.recipients);
+    console.log(`   body ${r.body}${r.quoted ? ", original quoted" : ""}`);
+    console.log(
+      `   ${r.kept.count} file(s) kept unchanged, ${r.added} added, ${r.removed} removed`,
+    );
+    console.log(r.url);
+  });
+}
+
 /** To, Cc and Bcc on their own lines; Cc and Bcc only when present. */
 function printRecipients(r: { to: string[]; cc: string[]; bcc: string[] }): void {
   console.log(`   To:  ${r.to.join(", ")}`);

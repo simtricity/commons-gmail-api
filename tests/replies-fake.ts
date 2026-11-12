@@ -4,7 +4,7 @@
  */
 import { GmailClient, GmailWriter, GuardedWriter, MemoryTokenStore } from "../mod.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY, SCOPE_READONLY } from "../mod.ts";
-import { readRaw } from "./mime-read.ts";
+import { leaves, readRaw } from "./mime-read.ts";
 
 export const OWNER = "owner@home.test";
 export const WRITE = `${SCOPE_READONLY} ${SCOPE_MODIFY} ${SCOPE_COMPOSE}`;
@@ -44,7 +44,10 @@ export class FakeGmail {
   readonly calls: Call[] = [];
   readonly drafts = new Map<
     string,
-    { id: string; message: { id: string; threadId?: string; raw: string } }
+    {
+      id: string;
+      message: { id: string; threadId?: string; raw?: string; fixture?: FixtureMessage };
+    }
   >();
   sendAs: {
     sendAsEmail: string;
@@ -94,17 +97,60 @@ export class FakeGmail {
     return this.calls.filter((c) => c.method !== "GET");
   }
 
-  /** A draft's message as a fixture, from the raw message it was created with. */
+  /** Put a draft in place as a fixture: for shapes the builder cannot write (inline images). */
+  seedDraft(id: string, message: FixtureMessage): void {
+    this.drafts.set(id, {
+      id,
+      message: { id: message.id, threadId: message.threadId, fixture: message },
+    });
+  }
+
+  /** Someone edits the draft in Gmail: its message id moves on, content unchanged. */
+  touchDraft(id: string): void {
+    const d = this.drafts.get(id)!;
+    const fixture = this.#draftMessage(d.message.id)!;
+    const next = `${d.message.id}-edited`;
+    d.message = { id: next, threadId: d.message.threadId, fixture: { ...fixture, id: next } };
+  }
+
+  /** A draft's message as a fixture: seeded, or read back from the raw message it was written as. */
   #draftMessage(messageId: string): FixtureMessage | undefined {
     const d = [...this.drafts.values()].find((x) => x.message.id === messageId);
     if (!d) return undefined;
-    const h = readRaw(d.message.raw).headers;
-    const pick = ["subject", "to", "cc", "date", "from"].filter((k) => h[k] !== undefined);
-    return {
+    if (d.message.fixture) return d.message.fixture;
+    const m = readRaw(d.message.raw!);
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(m.headers)) {
+      if (!k.startsWith("content-") && k !== "mime-version") headers[k] = v;
+    }
+    const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+    const out: FixtureMessage = {
       id: d.message.id,
       threadId: d.message.threadId ?? `t-${d.id}`,
-      headers: Object.fromEntries(pick.map((k) => [k[0].toUpperCase() + k.slice(1), h[k]])),
+      headers,
+      files: [],
     };
+    for (const l of leaves(m)) {
+      const disp = l.headers["content-disposition"];
+      if (!disp && l.type === "text/plain" && out.text === undefined) out.text = dec(l.body);
+      else if (!disp && l.type === "text/html" && out.html === undefined) out.html = dec(l.body);
+      else if (disp) {
+        const name = /filename="([^"]+)"/.exec(disp)?.[1] ??
+          decodeURIComponent(/filename\*=UTF-8''([^;]+)/.exec(disp)?.[1] ?? "file");
+        out.files!.push({
+          filename: name,
+          mimeType: l.type,
+          bytes: l.body,
+          inline: disp.startsWith("inline") && !!l.headers["content-id"],
+        });
+      }
+    }
+    return out;
+  }
+
+  /** A message by id: a fixture, or a draft's message. */
+  #message(id: string): FixtureMessage | undefined {
+    return this.messages.get(id) ?? this.#draftMessage(id);
   }
 
   #payload(m: FixtureMessage, format: string) {
@@ -164,8 +210,8 @@ export class FakeGmail {
       if (this.failDownloads) {
         return json({ error: { code: 500, message: "download failed" } }, 500);
       }
-      const m = this.messages.get(att[1]);
-      const i = Number(att[2].split("-att-")[1]);
+      const m = this.#message(att[1]);
+      const i = Number(att[2].split("-att-").pop());
       const f = m?.files?.[i];
       return f
         ? json({ size: f.bytes.length, data: b64url(f.bytes) })
@@ -173,7 +219,7 @@ export class FakeGmail {
     }
     const msg = path.match(/^\/messages\/([^/]+)$/);
     if (msg && method === "GET") {
-      const m = this.messages.get(decodeURIComponent(msg[1])) ?? this.#draftMessage(msg[1]);
+      const m = this.#message(decodeURIComponent(msg[1]));
       if (!m) return json({ error: { code: 404, message: "not found" } }, 404);
       return json({
         id: m.id,
@@ -181,11 +227,50 @@ export class FakeGmail {
         payload: this.#payload(m, u.searchParams.get("format") ?? "full"),
       });
     }
+    const thread = path.match(/^\/threads\/([^/]+)$/);
+    if (thread && method === "GET") {
+      const fmt = u.searchParams.get("format") ?? "full";
+      const msgs = [...this.messages.values()].filter((m) => m.threadId === thread[1]);
+      return json({
+        id: thread[1],
+        messages: msgs.map((m) => ({
+          id: m.id,
+          threadId: m.threadId,
+          payload: this.#payload(m, fmt),
+        })),
+      });
+    }
+    const draft = path.match(/^\/drafts\/([^/]+)$/);
+    if (draft && method === "GET") {
+      const d = this.drafts.get(draft[1]);
+      if (!d) return json({ error: { code: 404, message: "no draft" } }, 404);
+      const fmt = u.searchParams.get("format") ?? "full";
+      const m = this.#draftMessage(d.message.id)!;
+      return json({
+        id: d.id,
+        message: {
+          id: m.id,
+          threadId: m.threadId,
+          ...(fmt === "minimal" ? {} : { payload: this.#payload(m, fmt) }),
+        },
+      });
+    }
+    if (draft && method === "PUT") {
+      const d = this.drafts.get(draft[1]);
+      if (!d) return json({ error: { code: 404, message: "no draft" } }, 404);
+      const n = Number(/-(\d+)$/.exec(d.message.id)?.[1] ?? 1) + 1;
+      d.message = {
+        id: `m-${d.id}-${n}`,
+        threadId: body.message.threadId ?? d.message.threadId,
+        raw: body.message.raw,
+      };
+      return json({ id: d.id, message: { id: d.message.id, threadId: d.message.threadId } });
+    }
     if (path === "/drafts" && method === "GET") {
       const q = u.searchParams.get("q");
       const max = Number(u.searchParams.get("maxResults") ?? 100);
       const all = [...this.drafts.values()].reverse()
-        .filter((d) => !q || readRaw(d.message.raw).headers["subject"]?.includes(q))
+        .filter((d) => !q || this.#draftMessage(d.message.id)!.headers["subject"]?.includes(q))
         .slice(0, max)
         .map((d) => ({ id: d.id, message: { id: d.message.id, threadId: d.message.threadId } }));
       return json(all.length ? { drafts: all } : {});
