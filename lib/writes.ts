@@ -10,6 +10,7 @@
  * @module
  */
 
+import { composeBody } from "./compose.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
 import { GmailApiError, InsufficientScopeError } from "./errors.ts";
@@ -224,12 +225,13 @@ export class GmailWriter {
         `createDraft: attachments total ${attachBytes} bytes; Gmail's limit is ${MAX_ATTACHMENT_BYTES}`,
       );
     }
+    const body = composeBody({ text: input.text, html: input.html });
     const raw = buildRawMessage({
       to,
       cc: input.cc,
       bcc: input.bcc,
       subject: subject ?? "",
-      text: input.text,
+      ...body,
       inReplyTo,
       references,
       attachments: input.attachments,

@@ -245,8 +245,13 @@ export interface DraftInput {
   bcc?: string[];
   /** Subject. When replying, defaults to `Re: <original subject>`. */
   subject?: string;
-  /** Plain-text body, UTF-8. */
+  /** Plain-text body, UTF-8. Always sent; with an HTML body it is the plain alternative. */
   text: string;
+  /**
+   * The body as HTML, sent as given (it is the caller's own; nothing is sanitised). Absent: when
+   * an HTML part is needed (a quote, a signature), it is the escaped text.
+   */
+  html?: string;
   /** Reply in the thread of this message: sets threadId, In-Reply-To and References. */
   replyToMessageId?: string;
   /** Files to attach, as bytes. The library never reads paths; callers load the files. */

@@ -3,7 +3,7 @@
  * listing, forwarding and updating drafts. Synthetic mailbox only.
  */
 import { assert, assertEquals } from "@std/assert";
-import { buildRawMessage } from "../mod.ts";
+import { buildRawMessage, composeBody, escapeHtml, textToHtml } from "../mod.ts";
 import { FakeGmail, type FixtureMessage } from "./replies-fake.ts";
 import { leaves, readRaw, shape, textOf } from "./mime-read.ts";
 
@@ -89,4 +89,47 @@ Deno.test("builder: text alone, text with HTML, and either with files, as the ri
     buildRawMessage({ ...base, html }),
     "deterministic",
   );
+});
+
+Deno.test("composer: plain stays plain; HTML, signature and tail in Gmail's order", () => {
+  assertEquals(composeBody({ text: "hi" }), { text: "hi" }, "nothing needs HTML: plain text only");
+
+  const sig = { html: "<b>Jo</b>", text: "Jo" };
+  const tail = { text: "On X, Y wrote:\n> q", html: '<div class="gmail_quote">Q</div>' };
+  assertEquals(composeBody({ text: "a<b\nc", html: undefined, signature: sig }), {
+    text: "a<b\nc\n\n-- \nJo",
+    html: '<div dir="ltr">a&lt;b<br>c</div><br><div class="gmail_signature"><b>Jo</b></div>',
+  });
+  assertEquals(composeBody({ text: "t", html: "<i>t</i>", tail }), {
+    text: "t\n\nOn X, Y wrote:\n> q",
+    html: '<div dir="ltr"><i>t</i></div><br><div class="gmail_quote">Q</div>',
+  });
+  const both = composeBody({ text: "t", signature: sig, tail });
+  assert(
+    both.html!.indexOf("gmail_signature") < both.html!.indexOf("gmail_quote"),
+    "signature above the quote",
+  );
+  assert(both.text.indexOf("-- ") < both.text.indexOf("wrote:"));
+
+  assertEquals(
+    escapeHtml(`<a href="x" onerror='y'>&</a>`),
+    "&lt;a href=&quot;x&quot; onerror=&#39;y&#39;&gt;&amp;&lt;/a&gt;",
+  );
+  assertEquals(textToHtml("a\r\nb\nc"), "a<br>b<br>c");
+});
+
+Deno.test("createDraft with an HTML body sends text and HTML as alternatives", async () => {
+  const fake = new FakeGmail();
+  await fake.writers().writer.createDraft({
+    to: ["x@away.test"],
+    subject: "S",
+    text: "Plain",
+    html: "<p>Rich</p>",
+  });
+  const m = readRaw(posted(fake).message.raw);
+  assertEquals(shape(m), "multipart/alternative[text/plain,text/html]");
+  assertEquals([textOf(m, "text/plain"), textOf(m, "text/html")], [
+    "Plain",
+    '<div dir="ltr"><p>Rich</p></div>',
+  ]);
 });
