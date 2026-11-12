@@ -10,6 +10,8 @@ import {
   QUOTE_MAX_CHARS,
   quoteBlock,
   replyAllRecipients,
+  scrubSignatureHtml,
+  signatureBlock,
   splitAddresses,
   textToHtml,
 } from "../mod.ts";
@@ -330,4 +332,75 @@ Deno.test("createDraft replyAll without replyToMessageId is a TypeError before a
   }
   assert(err instanceof TypeError);
   assertEquals(fake.calls.length, 0);
+});
+
+Deno.test("signature scrub: scripts, styles, handlers and script URLs out; images kept", () => {
+  const cases: [string, string][] = [
+    [
+      '<b>Jo</b><img src="data:image/png;base64,AA" alt="logo" ONLOAD="x()"/>',
+      '<b>Jo</b><img src="data:image/png;base64,AA" alt="logo"/>',
+    ],
+    [
+      '<img src="https://cdn.test/logo.png" width=80>',
+      '<img src="https://cdn.test/logo.png" width=80>',
+    ],
+    [
+      '<a href=" jav&#x61;script:alert(1)">l</a><a href="https://e.test">ok</a>',
+      '<a>l</a><a href="https://e.test">ok</a>',
+    ],
+    ['<a href="&#106;avascript:1">l</a><a href=VBScript:x>v</a>', "<a>l</a><a>v</a>"],
+    ["<sc<script>x</script>ript>alert(1)</script>after", "after"],
+    ["<style>p{}</style><div onclick=x>d</div><script src=x.js>", "<div>d</div>"],
+    [`<p title='a onerror=b'>t</p>`, `<p title='a onerror=b'>t</p>`],
+    ['<img alt="x>" onerror=y', '&lt;img alt="x>" onerror=y'],
+    ["a < b and <c", "a &lt; b and &lt;c"],
+  ];
+  for (const [input, want] of cases) assertEquals(scrubSignatureHtml(input), want, input);
+  assertEquals(signatureBlock("<div>Jo Bloggs<br>Desk</div>"), {
+    html: "<div>Jo Bloggs<br>Desk</div>",
+    text: "Jo Bloggs\nDesk",
+  });
+  assertEquals(signatureBlock(""), null);
+  assertEquals(signatureBlock("<script>x</script>"), null);
+});
+
+Deno.test("createDraft signature: the default send-as's, above the quote; none; off", async () => {
+  const fake = new FakeGmail([ORIGINAL]);
+  fake.sendAs = [
+    { sendAsEmail: OWNER, isPrimary: true, signature: "<b>Primary</b>" },
+    {
+      sendAsEmail: "alias@home.test",
+      isDefault: true,
+      signature: '<b>Alias</b><img src="cid:x" onerror="y">',
+    },
+  ];
+  const { writer } = fake.writers();
+  const p = await writer.buildDraft({
+    replyToMessageId: "orig",
+    text: "hi",
+    signature: true,
+    replyAll: true,
+  });
+  assertEquals(p.signature, "added");
+  assertEquals(fake.calls.filter((c) => c.path.includes("sendAs")).length, 1, "send-as read once");
+  const m = readRaw(p.message.raw);
+  const h = textOf(m, "text/html")!;
+  assert(h.includes('<div class="gmail_signature"><b>Alias</b><img src="cid:x"></div>'), h);
+  assert(h.indexOf("gmail_signature") < h.indexOf("gmail_quote"));
+  assert(textOf(m, "text/plain")!.startsWith("hi\n\n-- \nAlias\n\nOn "));
+
+  fake.sendAs = [{ sendAsEmail: OWNER, isPrimary: true, signature: "<i>P</i>" }];
+  const primary = await writer.buildDraft({ to: ["x@away.test"], text: "t", signature: true });
+  assert(
+    textOf(readRaw(primary.message.raw), "text/html")!.includes("<i>P</i>"),
+    "falls back to the primary",
+  );
+
+  fake.sendAs = [{ sendAsEmail: OWNER, isPrimary: true, isDefault: true }];
+  const none = await writer.buildDraft({ to: ["x@away.test"], text: "t", signature: true });
+  assertEquals(none.signature, "none");
+  assertEquals(shape(readRaw(none.message.raw)), "text/plain");
+
+  const off = await writer.buildDraft({ to: ["x@away.test"], text: "t" });
+  assertEquals(off.signature, "off");
 });

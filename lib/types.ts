@@ -281,6 +281,12 @@ export interface DraftInput {
    * replaces the computed one and a given `cc` is added to it.
    */
   replyAll?: boolean;
+  /**
+   * Add the send-as signature of the draft's From address (the default send-as, else the
+   * primary), after the new body and above any quote, as Gmail places it. Its HTML is scrubbed
+   * of scripts, styles, event handlers and `javascript:` URLs; images are kept.
+   */
+  signature?: boolean;
   /** Files to attach, as bytes. The library never reads paths; callers load the files. */
   attachments?: DraftAttachment[];
 }
@@ -293,6 +299,8 @@ export interface DraftPlan {
   recipients: { to: string[]; cc: string[]; bcc: string[] };
   /** True when the original was quoted under the reply. */
   quoted: boolean;
+  /** `added`; `none` when asked for but no signature is set; `off` when not asked for. */
+  signature: "added" | "none" | "off";
 }
 
 /** A file attached to a draft. */

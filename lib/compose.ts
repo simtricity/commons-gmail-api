@@ -6,6 +6,8 @@
  * @module
  */
 
+import { stripHtml } from "./body.ts";
+
 /** Escape text for HTML: `& < > " '`. Everything from another message goes through this. */
 export function escapeHtml(text: string): string {
   return text
@@ -120,4 +122,57 @@ export function quoteBlock(original: QuotedOriginal): BodyTail {
       `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">` +
       `${textToHtml(body)}</blockquote></div>`,
   };
+}
+
+/** Decode the entities and drop the whitespace a URL scheme can be hidden behind. */
+function schemeOf(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);?/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);?/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(
+      /&(tab|newline|colon);/gi,
+      (_, n) => ({ tab: "\t", newline: "\n", colon: ":" })[n.toLowerCase() as "tab"],
+    )
+    // deno-lint-ignore no-control-regex
+    .replace(/[\u0000-\u0020]+/g, "")
+    .toLowerCase();
+}
+
+/**
+ * Make a signature's HTML safe to carry: remove `<script>` and `<style>` elements, every
+ * event-handler attribute (`on…=`), and any attribute whose value is a `javascript:` or
+ * `vbscript:` URL, including entity-encoded ones. Any `<` that does not open a well-formed tag
+ * (an unclosed tag, a stray bracket) becomes `&lt;`, so nothing unchecked can merge with the
+ * markup around it. Everything else, images included, is kept: it is the account holder's own
+ * signature, from their Gmail settings.
+ */
+export function scrubSignatureHtml(html: string): string {
+  const attr = /\s([a-z_:][-a-z0-9_:.]*)(\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/gi;
+  const token =
+    /<!--[\s\S]*?-->|<\/[a-z][a-z0-9]*[^<>]*>|<([a-z][a-z0-9]*)\b((?:[^<>"']|"[^"]*"|'[^']*')*)>|</gi;
+  // removing one element can splice another together from its neighbours: repeat until stable
+  let out = html;
+  for (let prev = ""; prev !== out;) {
+    prev = out;
+    out = out.replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, "");
+  }
+  return out
+    .replace(/<(script|style)\b[\s\S]*$/i, "") // one left unclosed runs to the end
+    .replace(token, (whole, tag?: string, attrs?: string) => {
+      if (whole === "<") return "&lt;";
+      if (!tag) return /^<\/(script|style)\b/i.test(whole) ? "" : whole;
+      if (/^(script|style)$/i.test(tag)) return "";
+      const kept = (attrs ?? "").replace(attr, (a, name: string, _eq, value?: string) => {
+        if (/^on/i.test(name)) return "";
+        const v = value?.replace(/^["']|["']$/g, "") ?? "";
+        return /^(javascript|vbscript):/.test(schemeOf(v)) ? "" : a;
+      });
+      return `<${tag}${kept}>`;
+    });
+}
+
+/** A send-as signature as a {@link SignatureBlock}: scrubbed HTML, and its text. Empty: null. */
+export function signatureBlock(signatureHtml: string | undefined): SignatureBlock | null {
+  const html = scrubSignatureHtml(signatureHtml ?? "").trim();
+  return html ? { html, text: stripHtml(html) } : null;
 }

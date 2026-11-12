@@ -11,7 +11,13 @@
  */
 
 import { bodyText } from "./body.ts";
-import { type BodyTail, composeBody, quoteBlock } from "./compose.ts";
+import {
+  type BodyTail,
+  composeBody,
+  quoteBlock,
+  type SignatureBlock,
+  signatureBlock,
+} from "./compose.ts";
 import { addRecipients, bareAddress, replyAllRecipients, splitAddresses } from "./recipients.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
@@ -25,6 +31,7 @@ import type {
   LabelChange,
   LabelOptions,
   Message,
+  SendAs,
   Thread,
 } from "./types.ts";
 
@@ -192,12 +199,15 @@ export class GmailWriter {
 
   /**
    * The account holder's own addresses, bare and lower-cased: the profile address and every
-   * send-as. Reply-all leaves these out.
+   * send-as. Reply-all leaves these out. Pass `sendAs` when already read.
    */
-  async selfAddresses(): Promise<Set<string>> {
-    const [profile, sendAs] = await Promise.all([this.client.profile(), this.client.listSendAs()]);
+  async selfAddresses(sendAs?: SendAs[]): Promise<Set<string>> {
+    const [profile, list] = await Promise.all([
+      this.client.profile(),
+      sendAs ?? this.client.listSendAs(),
+    ]);
     return new Set(
-      [profile.emailAddress, ...sendAs.map((s) => s.sendAsEmail)].map(bareAddress).filter(Boolean),
+      [profile.emailAddress, ...list.map((s) => s.sendAsEmail)].map(bareAddress).filter(Boolean),
     );
   }
 
@@ -238,6 +248,8 @@ export class GmailWriter {
     let references: string[] | undefined;
     let threadId: string | undefined;
     let tail: BodyTail | null = null;
+    let sendAs: SendAs[] | undefined;
+    const listSendAs = async () => sendAs ??= await this.client.listSendAs();
     if (input.replyToMessageId) {
       const quote = input.quote !== false;
       const orig = await this.client.getMessage(
@@ -255,7 +267,7 @@ export class GmailWriter {
           replyTo: header(orig.payload, "Reply-To"),
           to: header(orig.payload, "To"),
           cc: header(orig.payload, "Cc"),
-        }, await this.selfAddresses());
+        }, await this.selfAddresses(await listSendAs()));
         if (!input.to?.length) to = all.to;
         cc = addRecipients([], [...all.cc, ...(input.cc ?? [])], to);
       } else if (!to.length) {
@@ -273,13 +285,19 @@ export class GmailWriter {
         });
       }
     }
+    let signature: SignatureBlock | null = null;
+    if (input.signature) {
+      const list = await listSendAs();
+      const from = list.find((a) => a.isDefault) ?? list.find((a) => a.isPrimary);
+      signature = signatureBlock(from?.signature);
+    }
     if (!to.length) throw new Error("createDraft: no recipients (pass `to` or a replyToMessageId)");
     const raw = buildRawMessage({
       to,
       cc,
       bcc,
       subject: subject ?? "",
-      ...composeBody({ text: input.text, html: input.html, tail }),
+      ...composeBody({ text: input.text, html: input.html, signature, tail }),
       inReplyTo,
       references,
       attachments: input.attachments,
@@ -288,6 +306,7 @@ export class GmailWriter {
       message: threadId ? { raw, threadId } : { raw },
       recipients: { to, cc, bcc },
       quoted: tail !== null,
+      signature: !input.signature ? "off" : signature ? "added" : "none",
     };
   }
 
