@@ -221,7 +221,12 @@ export class GmailWriter {
    * `quote: false`. Nothing is sent; there is no send method in this package.
    */
   async createDraft(input: DraftInput): Promise<Draft> {
-    const plan = await this.buildDraft(input);
+    return await this.postDraft(await this.buildDraft(input));
+  }
+
+  /** Write a draft from a {@link buildDraft} plan. Nothing is sent. */
+  async postDraft(plan: DraftPlan): Promise<Draft> {
+    await this.requireScope(SCOPE_COMPOSE);
     return await this.client.request<Draft>("POST", "/drafts", { message: plan.message });
   }
 

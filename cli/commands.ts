@@ -336,9 +336,14 @@ export async function draftCreate(
   opts: {
     to?: string[];
     cc?: string[];
+    bcc?: string[];
     subject?: string;
     text: string;
+    html?: string;
     replyTo?: string;
+    replyAll?: boolean;
+    quote?: boolean;
+    signature?: boolean;
     attach?: string[];
   },
 ): Promise<void> {
@@ -353,9 +358,14 @@ export async function draftCreate(
     attachments: attachments.length ? attachments : undefined,
     to: opts.to,
     cc: opts.cc,
+    bcc: opts.bcc,
     subject: opts.subject,
     text: opts.text,
+    html: opts.html,
     replyToMessageId: opts.replyTo ? parseGmailId(opts.replyTo) : undefined,
+    replyAll: opts.replyAll,
+    quote: opts.quote,
+    signature: opts.signature,
   });
   out(ctx, r, () => {
     const d = r.draft;
@@ -364,8 +374,26 @@ export async function draftCreate(
         d.message.threadId ? `, thread ${d.message.threadId}` : ""
       }). Not sent.`,
     );
+    const { to, cc, bcc } = r.recipients;
+    console.log(`   To:  ${to.join(", ")}`);
+    if (cc.length) console.log(`   Cc:  ${cc.join(", ")}`);
+    if (bcc.length) console.log(`   Bcc: ${bcc.join(", ")}`);
+    if (r.quoted) console.log("   original quoted below");
+    if (r.signature !== "off") {
+      console.log(r.signature === "added" ? "   signature added" : "   no signature set");
+    }
     for (const a of attachments) console.log(`   📎 ${a.filename} (${a.content.length} bytes)`);
     console.log(r.url);
+  });
+}
+
+export async function drafts(ctx: Context, opts: { max?: number; q?: string }): Promise<void> {
+  const list = await (await client(ctx)).listDrafts(opts);
+  out(ctx, list, () => {
+    if (!list.length) return console.log("no drafts");
+    for (const d of list) {
+      console.log(`${d.id}  ${d.date}\n   ${d.subject || "(no subject)"}\n   To: ${d.to}`);
+    }
   });
 }
 

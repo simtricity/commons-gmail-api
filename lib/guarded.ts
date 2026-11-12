@@ -15,7 +15,7 @@
  */
 
 import { sha256Hex } from "./mime.ts";
-import type { Draft, DraftInput, Label } from "./types.ts";
+import type { Draft, DraftInput, DraftPlan, Label } from "./types.ts";
 import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
 /** Default per-call id cap. */
@@ -89,6 +89,12 @@ export interface CreateDraftResult {
   url: string;
   /** Always false: this package cannot send. */
   sent: false;
+  /** Every recipient, exactly as written into the message. */
+  recipients: DraftPlan["recipients"];
+  /** True when the original was quoted under the reply. */
+  quoted: boolean;
+  /** `added`; `none` when asked for but no signature is set; `off` when not asked for. */
+  signature: DraftPlan["signature"];
 }
 
 /** A guard refused the request. Nothing was sent to Gmail. */
@@ -264,14 +270,22 @@ export class GuardedWriter {
     return { ...plan, applied: true };
   }
 
-  /** Create a draft and log it (attachment filenames and sizes, never content). Never sends. */
+  /**
+   * Create a draft and log it: ids, recipient counts (never addresses), whether it quoted or
+   * signed, and attachment filenames and sizes (never content). Never sends.
+   */
   async createDraft(input: DraftInput): Promise<CreateDraftResult> {
-    const draft = await this.writer.createDraft(input);
+    const plan = await this.writer.buildDraft(input);
+    const draft = await this.writer.postDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
     await this.record({
       op: "draft.create",
       draftId: draft.id,
       messageId: draft.message.id,
       threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      quoted: plan.quoted,
+      signature: plan.signature,
       ...(input.attachments?.length
         ? {
           attachments: input.attachments.map((a) => ({
@@ -285,6 +299,9 @@ export class GuardedWriter {
       draft,
       url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
       sent: false,
+      recipients: plan.recipients,
+      quoted: plan.quoted,
+      signature: plan.signature,
     };
   }
 

@@ -429,3 +429,38 @@ Deno.test("listDrafts: newest first, bounded, filtered, metadata only, on the re
 
   assertEquals(await new FakeGmail().client(WRITE).listDrafts(), [], "no drafts");
 });
+
+Deno.test("guard createDraft: result carries recipients, quoted and signature; log has counts only", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const log = `${dir}/writes.log`;
+    const fake = new FakeGmail([GROUP]);
+    fake.sendAs = [
+      { sendAsEmail: OWNER, isPrimary: true, isDefault: true, signature: "<b>S</b>" },
+      { sendAsEmail: "alias@home.test" },
+    ];
+    const r = await fake.writers(log).guard.createDraft({
+      replyToMessageId: "orig",
+      text: "hi",
+      replyAll: true,
+      signature: true,
+      bcc: ["hidden@away.test"],
+    });
+    assertEquals(r.sent, false);
+    assertEquals(r.recipients, {
+      to: ["Sender Name <sender@away.test>"],
+      cc: ["Jo <jo@away.test>", "Kim <kim@away.test>"],
+      bcc: ["hidden@away.test"],
+    });
+    assertEquals([r.quoted, r.signature], [true, "added"]);
+    const text = await Deno.readTextFile(log);
+    const line = JSON.parse(text.trim());
+    assertEquals(line.op, "draft.create");
+    assertEquals(line.recipients, { to: 1, cc: 2, bcc: 1 });
+    assertEquals([line.quoted, line.signature], [true, "added"]);
+    assertEquals(line.account, OWNER, "the log names the mailbox, as for every write");
+    assert(!text.includes("away.test") && !text.includes("alias@"), "no recipient is ever logged");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
