@@ -37,6 +37,10 @@
  *                Replies quote the original (--no-quote to leave it out); --reply-all adds
  *                everyone on the original but you; --signature adds your send-as signature.
  *                Creates a draft only. Applied writes append to ~/.simt/gmail-api/writes.log
+ *   draft forward --message <id> --to a@b [--cc a@b]... [--bcc a@b]... [--body TEXT]
+ *                [--body-file <path>] [--html-file <path>] [--files all|none|a.pdf,b.xlsx]
+ *                [--signature]   Forwards as Gmail does (Fwd:, the original's thread and
+ *                files); inline images are reported, not carried. Creates a draft only.
  *   drafts       [--max N] [-q <query>]          List drafts: id, subject, To, date
  *
  *   organise <verb> ...                           Sort a mailbox into labels with a decision
@@ -81,6 +85,7 @@ const args = parseArgs(Deno.args, {
     "recipient",
     "days",
     "html-file",
+    "files",
   ],
   collect: ["include", "filename", "to", "cc", "bcc", "attach"],
   boolean: [
@@ -125,6 +130,8 @@ Commands:
                [--cc <a>]... [--bcc <a>]... [--attach <path>]... (total ≤ 25 MB)
                replies: quoted by default [--no-quote]; [--reply-all] everyone but you
                [--signature] your send-as signature, above the quote
+  draft forward --message <id> --to <a> [--cc <a>]... [--bcc <a>]... [--body <t>]       [write]
+               [--files all|none|<name>,<name>] (default all) [--signature]
   drafts       [--max N] [-q <query>]          List drafts (newest first; default 20)
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
@@ -250,7 +257,29 @@ try {
       break;
     }
     case "draft":
-      if (sub !== "create") throw new Error("draft needs a subcommand: create");
+      if (sub === "forward") {
+        if (!args.message) throw new Error("draft forward needs --message <id>");
+        if (!(args.to as string[] | undefined)?.length) throw new Error("draft forward needs --to");
+        if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
+        const files = args.files === undefined || args.files === "all"
+          ? "all" as const
+          : args.files === "none"
+          ? "none" as const
+          : String(args.files).split(",").map((x) => x.trim()).filter(Boolean);
+        await commands.draftForward(ctx, {
+          message: args.message,
+          to: (args.to as string[]).map(String),
+          cc: (args.cc as string[] | undefined)?.map(String),
+          bcc: (args.bcc as string[] | undefined)?.map(String),
+          text: args.body ??
+            (args["body-file"] ? await Deno.readTextFile(args["body-file"]) : undefined),
+          html: args["html-file"] ? await Deno.readTextFile(args["html-file"]) : undefined,
+          files,
+          signature: args.signature,
+        });
+        break;
+      }
+      if (sub !== "create") throw new Error("draft needs a subcommand: create | forward");
       if (!args.body && !args["body-file"]) {
         throw new Error("draft create needs --body <text> or --body-file <path>");
       }

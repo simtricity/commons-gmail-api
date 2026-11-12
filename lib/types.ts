@@ -303,6 +303,54 @@ export interface DraftPlan {
   signature: "added" | "none" | "off";
 }
 
+/** Input for a forward draft. */
+export interface ForwardInput {
+  /** The message to forward. */
+  messageId: string;
+  /** Recipients: required. Nothing is computed from the original. */
+  to: string[];
+  /** Cc recipients. */
+  cc?: string[];
+  /** Bcc recipients. */
+  bcc?: string[];
+  /** Your note above the forwarded message. May be empty. */
+  text?: string;
+  /** Your note as HTML, sent as given. */
+  html?: string;
+  /**
+   * The original's files to carry: `all` (default), `none`, or exact filenames. A name that
+   * matches no regular file throws before any download. Inline images are never carried; they
+   * are reported in `skippedInline`.
+   */
+  attachments?: "all" | "none" | string[];
+  /** Add the send-as signature, as for {@link DraftInput.signature}. */
+  signature?: boolean;
+}
+
+/** What a forward carried from the original. */
+export interface CarriedSummary {
+  /** Files carried. */
+  count: number;
+  /** Their total bytes. */
+  totalBytes: number;
+  /** sha256 (hex) of each, in order. */
+  sha256: string[];
+}
+
+/** A forward built but not yet written. */
+export interface ForwardPlan {
+  /** The `message` resource to post. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** The files carried from the original. */
+  carried: CarriedSummary;
+  /** Inline parts of the original that were not carried (signature logos, pasted images). */
+  skippedInline: number;
+  /** As for {@link DraftPlan.signature}. */
+  signature: "added" | "none" | "off";
+}
+
 /** A file attached to a draft. */
 export interface DraftAttachment {
   /** Filename shown to the recipient. */

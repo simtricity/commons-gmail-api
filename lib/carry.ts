@@ -69,6 +69,24 @@ function embeddedFiles(msg: Message): (CarryRef & { inline: boolean; data: strin
   return out;
 }
 
+/** Every file part on a message, regular and inline, without downloading anything. */
+export function fileRefs(msg: Message): (CarryRef & { inline: boolean })[] {
+  return [
+    ...listAttachments(msg).map(({ filename, mimeType, size, inline }) => ({
+      filename,
+      mimeType,
+      size,
+      inline,
+    })),
+    ...embeddedFiles(msg).map(({ filename, mimeType, size, inline }) => ({
+      filename,
+      mimeType,
+      size,
+      inline,
+    })),
+  ];
+}
+
 /**
  * A message's regular files as bytes, ready to attach to a new draft. Give the message id, or the
  * message already read in `full` format. The declared sizes are summed and checked against the

@@ -176,3 +176,51 @@ export function signatureBlock(signatureHtml: string | undefined): SignatureBloc
   const html = scrubSignatureHtml(signatureHtml ?? "").trim();
   return html ? { html, text: stripHtml(html) } : null;
 }
+
+/** The line Gmail opens a forwarded message with. */
+export const FORWARD_MARKER = "---------- Forwarded message ---------";
+
+/** The original a forward is built from: its headers as written, and its body as text. */
+export interface ForwardedOriginal {
+  /** `From`, as written. */
+  from: string;
+  /** `Date`, as written. */
+  date?: string;
+  /** `Subject`, as written. */
+  subject?: string;
+  /** `To`, as written. */
+  to?: string;
+  /** `Cc`, as written; its line is left out when absent. */
+  cc?: string;
+  /** The body as plain text (from `bodyText`). */
+  text: string;
+}
+
+/**
+ * The forwarded-message block, as Gmail writes it: the marker, then `From:`, `Date:`, `Subject:`,
+ * `To:` and (if any) `Cc:` lines from the original's headers, a blank line, and the original's
+ * text, not `> `-prefixed. The HTML holds only escaped text, as a quote does.
+ */
+export function forwardBlock(original: ForwardedOriginal): BodyTail {
+  const lines = [
+    `From: ${original.from}`,
+    `Date: ${original.date ?? ""}`,
+    `Subject: ${original.subject ?? ""}`,
+    `To: ${original.to ?? ""}`,
+    ...(original.cc ? [`Cc: ${original.cc}`] : []),
+  ];
+  const body = capped(original.text);
+  return {
+    text: `${FORWARD_MARKER}\n${lines.join("\n")}\n\n${body}`,
+    html:
+      `<div class="gmail_quote"><div dir="ltr" class="gmail_attr">${
+        escapeHtml(FORWARD_MARKER)
+      }<br>` +
+      `${lines.map(escapeHtml).join("<br>")}<br></div><br>${textToHtml(body)}</div>`,
+  };
+}
+
+/** `Fwd: <subject>`, with no second prefix when it already starts `Fwd:`, `Fw:` or `FW:`. */
+export function forwardSubject(subject: string): string {
+  return /^\s*fwd?:/i.test(subject) ? subject : `Fwd: ${subject}`;
+}

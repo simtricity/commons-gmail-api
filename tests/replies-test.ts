@@ -9,6 +9,10 @@ import {
   carryAttachments,
   composeBody,
   escapeHtml,
+  FORWARD_MARKER,
+  forwardBlock,
+  forwardSubject,
+  MAX_ATTACHMENT_BYTES,
   QUOTE_MAX_CHARS,
   quoteBlock,
   replyAllRecipients,
@@ -531,4 +535,166 @@ Deno.test("carry: the size check runs before any download", async () => {
   }
   assert(err2 instanceof AttachmentLimitError, "added files count toward the limit");
   assertEquals(fake.downloads, []);
+});
+
+Deno.test("forward block: Gmail's marker and header lines, unprefixed text, escaped HTML", () => {
+  const b = forwardBlock({
+    from: "A <a@x.test>",
+    date: "Tue, 10 Nov 2026 09:15:00 +0000",
+    subject: "Q & A",
+    to: "b@x.test",
+    text: "line <one>\n\nline two",
+  });
+  assertEquals(
+    b.text,
+    `${FORWARD_MARKER}\nFrom: A <a@x.test>\nDate: Tue, 10 Nov 2026 09:15:00 +0000\n` +
+      "Subject: Q & A\nTo: b@x.test\n\nline <one>\n\nline two",
+    "no Cc line when the original had none; text not > prefixed",
+  );
+  assert(b.html.startsWith('<div class="gmail_quote"><div dir="ltr" class="gmail_attr">-'));
+  assert(b.html.includes("From: A &lt;a@x.test&gt;<br>"));
+  assert(b.html.includes("Subject: Q &amp; A<br>"));
+  assert(b.html.includes("line &lt;one&gt;<br><br>line two</div>"));
+  assert(forwardBlock({ from: "a", cc: "c@x.test", text: "" }).text.includes("\nCc: c@x.test\n"));
+  const evil = forwardBlock({
+    from: "e",
+    text: `<script>x</script><img src=http://t.test/p onerror="y">`,
+  });
+  for (const bad of ["<script", "<img", 'onerror="']) assert(!evil.html.includes(bad), bad);
+});
+
+Deno.test("forward subject: one Fwd: prefix, whatever case or form the original has", () => {
+  assertEquals(forwardSubject("Quote"), "Fwd: Quote");
+  assertEquals(forwardSubject("Fwd: Quote"), "Fwd: Quote");
+  assertEquals(forwardSubject("Fw: Quote"), "Fw: Quote");
+  assertEquals(forwardSubject("FW: Quote"), "FW: Quote");
+  assertEquals(forwardSubject("fwd:Quote"), "fwd:Quote");
+  assertEquals(forwardSubject("Re: Quote"), "Fwd: Re: Quote");
+  assertEquals(forwardSubject(""), "Fwd: ");
+});
+
+const FWD_ORIGINAL: FixtureMessage = {
+  ...WITH_FILES,
+  headers: { ...WITH_FILES.headers, "Cc": "Kim <kim@away.test>" },
+};
+
+Deno.test("forwardDraft: caller's recipients only, Gmail's threading, all files, block in body", async () => {
+  const fake = new FakeGmail([FWD_ORIGINAL]);
+  const { writer } = fake.writers();
+  const p = await writer.buildForward({ messageId: "files", to: ["me@home.test"], text: "FYI" });
+  assertEquals(p.recipients, { to: ["me@home.test"], cc: [], bcc: [] });
+  assertEquals(p.message.threadId, "t1", "stays in the original's thread, as Gmail's Forward does");
+  const m = readRaw(p.message.raw);
+  assertEquals(m.headers["subject"], "Fwd: Quote request");
+  assertEquals(m.headers["in-reply-to"], "<m2@away.test>");
+  assertEquals(m.headers["references"], "<m1@away.test> <m2@away.test>");
+  assertEquals(m.headers["to"], "me@home.test");
+  assertEquals(m.headers["cc"], undefined, "nothing computed from the original");
+  assertEquals(m.headers["bcc"], undefined);
+  assertEquals(
+    shape(m),
+    "multipart/mixed[multipart/alternative[text/plain,text/html],application/pdf,application/vnd.ms-excel,text/plain]",
+  );
+  const t = textOf(m, "text/plain")!;
+  assert(t.startsWith(`FYI\n\n${FORWARD_MARKER}\nFrom: Sender Name <sender@away.test>\n`), t);
+  assert(t.includes("\nCc: Kim <kim@away.test>\n\nPlease send the quote."));
+  assertEquals(p.carried.count, 3);
+  assertEquals(p.skippedInline, 1, "the inline logo is reported, not carried");
+  const sent = leaves(m).filter((l) => l.headers["content-disposition"]?.startsWith("attachment"));
+  assertEquals(await Promise.all(sent.map((l) => sha256Hex(l.body))), p.carried.sha256);
+  assertEquals(p.carried.sha256[0], await sha256Hex(bytes(37, 80, 68, 70, 0, 255)));
+  assertEquals(fake.writes().length, 0, "buildForward writes nothing");
+});
+
+Deno.test("forwardDraft: none, by name, unknown name thrown before any download", async () => {
+  const fake = new FakeGmail([FWD_ORIGINAL]);
+  const { writer } = fake.writers();
+  const none = await writer.buildForward({
+    messageId: "files",
+    to: ["me@home.test"],
+    attachments: "none",
+  });
+  assertEquals([none.carried.count, none.skippedInline], [0, 1]);
+  assertEquals(shape(readRaw(none.message.raw)), "multipart/alternative[text/plain,text/html]");
+  assertEquals(fake.downloads, []);
+
+  const one = await writer.buildForward({
+    messageId: "files",
+    to: ["me@home.test"],
+    attachments: ["rates.xlsx"],
+  });
+  assertEquals(one.carried.count, 1);
+  assertEquals(fake.downloads, ["files-att-2"]);
+
+  let err: unknown;
+  try {
+    await writer.buildForward({
+      messageId: "files",
+      to: ["me@home.test"],
+      attachments: ["rates.xlsx", "logo.png", "nope.doc"],
+    });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof TypeError && /logo\.png.*nope\.doc/.test(err.message), String(err));
+  assertEquals(fake.downloads, ["files-att-2"], "nothing more downloaded");
+});
+
+Deno.test("forwardDraft: no to is refused before any request; oversize before any download", async () => {
+  const fake = new FakeGmail([FWD_ORIGINAL]);
+  const { writer } = fake.writers();
+  let err: unknown;
+  try {
+    await writer.buildForward({ messageId: "files", to: [] });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof TypeError);
+  assertEquals(fake.calls.length, 0);
+
+  const big = new FakeGmail([{
+    ...FWD_ORIGINAL,
+    files: [{
+      filename: "huge.bin",
+      mimeType: "application/octet-stream",
+      bytes: bytes(1),
+      declaredSize: MAX_ATTACHMENT_BYTES + 1,
+    }],
+  }]);
+  big.failDownloads = true;
+  let err2: unknown;
+  try {
+    await big.writers().writer.buildForward({ messageId: "files", to: ["me@home.test"] });
+  } catch (e) {
+    err2 = e;
+  }
+  assert(err2 instanceof AttachmentLimitError, String(err2));
+  assertEquals(big.downloads, []);
+  assertEquals(big.writes().length, 0);
+});
+
+Deno.test("guard forwardDraft: result, and a log line with counts and sha256 only", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const log = `${dir}/writes.log`;
+    const fake = new FakeGmail([FWD_ORIGINAL]);
+    const r = await fake.writers(log).guard.forwardDraft({
+      messageId: "files",
+      to: ["me@home.test"],
+      cc: ["x@away.test"],
+    });
+    assertEquals(r.sent, false);
+    assertEquals(r.recipients.cc, ["x@away.test"]);
+    assertEquals([r.carried.count, r.skippedInline, r.signature], [3, 1, "off"]);
+    const text = await Deno.readTextFile(log);
+    const line = JSON.parse(text.trim());
+    assertEquals(line.op, "draft.forward");
+    assertEquals(line.recipients, { to: 1, cc: 1, bcc: 0 });
+    assertEquals(line.carried.sha256, r.carried.sha256);
+    for (const leak of ["away.test", "me@home", "invoice", "rates", "Quote"]) {
+      assert(!text.includes(leak), `log holds no names or addresses: ${leak}`);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

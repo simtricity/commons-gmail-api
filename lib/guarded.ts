@@ -15,7 +15,15 @@
  */
 
 import { sha256Hex } from "./mime.ts";
-import type { Draft, DraftInput, DraftPlan, Label } from "./types.ts";
+import type {
+  CarriedSummary,
+  Draft,
+  DraftInput,
+  DraftPlan,
+  ForwardInput,
+  ForwardPlan,
+  Label,
+} from "./types.ts";
 import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
 /** Default per-call id cap. */
@@ -95,6 +103,24 @@ export interface CreateDraftResult {
   quoted: boolean;
   /** `added`; `none` when asked for but no signature is set; `off` when not asked for. */
   signature: DraftPlan["signature"];
+}
+
+/** Outcome of {@link GuardedWriter.forwardDraft}. */
+export interface ForwardDraftResult {
+  /** The draft as Gmail returned it. */
+  draft: Draft;
+  /** Link that opens the draft in Gmail's web UI. */
+  url: string;
+  /** Always false: this package cannot send. */
+  sent: false;
+  /** Every recipient, exactly as written into the message. */
+  recipients: ForwardPlan["recipients"];
+  /** The files carried from the original, with their sha256. */
+  carried: CarriedSummary;
+  /** Inline parts not carried: say so when it matters (a logo, a pasted screenshot). */
+  skippedInline: number;
+  /** `added`, `none` or `off`, as for a new draft. */
+  signature: ForwardPlan["signature"];
 }
 
 /** A guard refused the request. Nothing was sent to Gmail. */
@@ -301,6 +327,36 @@ export class GuardedWriter {
       sent: false,
       recipients: plan.recipients,
       quoted: plan.quoted,
+      signature: plan.signature,
+    };
+  }
+
+  /**
+   * Forward a message as a draft, with its files, in its thread, as Gmail's Forward does. Logs
+   * recipient counts, the carried files' count, bytes and sha256, and the inline parts skipped:
+   * never names or addresses. Never sends.
+   */
+  async forwardDraft(input: ForwardInput): Promise<ForwardDraftResult> {
+    const plan = await this.writer.buildForward(input);
+    const draft = await this.writer.postDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
+    await this.record({
+      op: "draft.forward",
+      draftId: draft.id,
+      messageId: draft.message.id,
+      threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      carried: plan.carried,
+      skippedInline: plan.skippedInline,
+      signature: plan.signature,
+    });
+    return {
+      draft,
+      url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
+      sent: false,
+      recipients: plan.recipients,
+      carried: plan.carried,
+      skippedInline: plan.skippedInline,
       signature: plan.signature,
     };
   }

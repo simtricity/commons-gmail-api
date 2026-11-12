@@ -374,10 +374,7 @@ export async function draftCreate(
         d.message.threadId ? `, thread ${d.message.threadId}` : ""
       }). Not sent.`,
     );
-    const { to, cc, bcc } = r.recipients;
-    console.log(`   To:  ${to.join(", ")}`);
-    if (cc.length) console.log(`   Cc:  ${cc.join(", ")}`);
-    if (bcc.length) console.log(`   Bcc: ${bcc.join(", ")}`);
+    printRecipients(r.recipients);
     if (r.quoted) console.log("   original quoted below");
     if (r.signature !== "off") {
       console.log(r.signature === "added" ? "   signature added" : "   no signature set");
@@ -385,6 +382,55 @@ export async function draftCreate(
     for (const a of attachments) console.log(`   📎 ${a.filename} (${a.content.length} bytes)`);
     console.log(r.url);
   });
+}
+
+export async function draftForward(
+  ctx: Context,
+  opts: {
+    message: string;
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    text?: string;
+    html?: string;
+    files: "all" | "none" | string[];
+    signature?: boolean;
+  },
+): Promise<void> {
+  const r = await (await guarded(ctx)).forwardDraft({
+    messageId: parseGmailId(opts.message),
+    to: opts.to,
+    cc: opts.cc,
+    bcc: opts.bcc,
+    text: opts.text,
+    html: opts.html,
+    attachments: opts.files,
+    signature: opts.signature,
+  });
+  out(ctx, r, () => {
+    const d = r.draft;
+    console.log(
+      `forward draft ${d.id} created (message ${d.message.id}${
+        d.message.threadId ? `, thread ${d.message.threadId}` : ""
+      }). Not sent.`,
+    );
+    printRecipients(r.recipients);
+    console.log(`   ${r.carried.count} file(s) carried, ${r.carried.totalBytes} bytes`);
+    if (r.skippedInline) {
+      console.log(`   ⚠ ${r.skippedInline} inline image(s) not carried (logos, pasted images)`);
+    }
+    if (r.signature !== "off") {
+      console.log(r.signature === "added" ? "   signature added" : "   no signature set");
+    }
+    console.log(r.url);
+  });
+}
+
+/** To, Cc and Bcc on their own lines; Cc and Bcc only when present. */
+function printRecipients(r: { to: string[]; cc: string[]; bcc: string[] }): void {
+  console.log(`   To:  ${r.to.join(", ")}`);
+  if (r.cc.length) console.log(`   Cc:  ${r.cc.join(", ")}`);
+  if (r.bcc.length) console.log(`   Bcc: ${r.bcc.join(", ")}`);
 }
 
 export async function drafts(ctx: Context, opts: { max?: number; q?: string }): Promise<void> {

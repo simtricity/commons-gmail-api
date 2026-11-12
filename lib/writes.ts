@@ -11,10 +11,12 @@
  */
 
 import { bodyText } from "./body.ts";
-import { MAX_ATTACHMENT_BYTES } from "./carry.ts";
+import { carryAttachments, fileRefs, MAX_ATTACHMENT_BYTES } from "./carry.ts";
 import {
   type BodyTail,
   composeBody,
+  forwardBlock,
+  forwardSubject,
   quoteBlock,
   type SignatureBlock,
   signatureBlock,
@@ -28,6 +30,8 @@ import type {
   Draft,
   DraftInput,
   DraftPlan,
+  ForwardInput,
+  ForwardPlan,
   Label,
   LabelChange,
   LabelOptions,
@@ -222,8 +226,81 @@ export class GmailWriter {
     return await this.postDraft(await this.buildDraft(input));
   }
 
+  /** The signature of the address drafts are written from: the default send-as, else the primary. */
+  private signatureFrom(sendAs: SendAs[]): SignatureBlock | null {
+    const from = sendAs.find((a) => a.isDefault) ?? sendAs.find((a) => a.isPrimary);
+    return signatureBlock(from?.signature);
+  }
+
+  /**
+   * Build a forward of `messageId`, as Gmail's own Forward writes it: `Fwd:` subject, the
+   * forwarded-message block, the original's files, and the original's thread (`In-Reply-To`,
+   * `References`). Recipients are the caller's only. Writes nothing.
+   */
+  async buildForward(input: ForwardInput): Promise<ForwardPlan> {
+    if (!input.to?.length) throw new TypeError("forwardDraft: `to` is required");
+    await this.requireScope(SCOPE_COMPOSE);
+    const orig = await this.client.getMessage(input.messageId, "full");
+    const pick = input.attachments ?? "all";
+    const regular = fileRefs(orig).filter((f) => !f.inline).map((f) => f.filename);
+    if (Array.isArray(pick)) {
+      const unknown = pick.filter((n) => !regular.includes(n));
+      if (unknown.length) {
+        throw new TypeError(
+          `forwardDraft: no file named ${unknown.map((n) => `"${n}"`).join(", ")}`,
+        );
+      }
+    }
+    const carried = await carryAttachments(this.client, orig, {
+      select: pick === "all"
+        ? undefined
+        : pick === "none"
+        ? () => false
+        : (f) => pick.includes(f.filename),
+    });
+    const signature = input.signature ? this.signatureFrom(await this.client.listSendAs()) : null;
+    const msgId = header(orig.payload, "Message-ID") ?? header(orig.payload, "Message-Id");
+    const prior = header(orig.payload, "References")?.split(/\s+/).filter(Boolean) ?? [];
+    const to = input.to;
+    const cc = input.cc ?? [];
+    const bcc = input.bcc ?? [];
+    const raw = buildRawMessage({
+      to,
+      cc,
+      bcc,
+      subject: forwardSubject(header(orig.payload, "Subject") ?? ""),
+      ...composeBody({
+        text: input.text ?? "",
+        html: input.html,
+        signature,
+        tail: forwardBlock({
+          from: header(orig.payload, "From") ?? "",
+          date: header(orig.payload, "Date"),
+          subject: header(orig.payload, "Subject"),
+          to: header(orig.payload, "To"),
+          cc: header(orig.payload, "Cc"),
+          text: bodyText(orig).text,
+        }),
+      }),
+      inReplyTo: msgId,
+      references: msgId ? [...prior, msgId] : prior,
+      attachments: carried.files,
+    });
+    return {
+      message: orig.threadId ? { raw, threadId: orig.threadId } : { raw },
+      recipients: { to, cc, bcc },
+      carried: {
+        count: carried.files.length,
+        totalBytes: carried.totalBytes,
+        sha256: carried.sha256,
+      },
+      skippedInline: carried.skippedInline,
+      signature: !input.signature ? "off" : signature ? "added" : "none",
+    };
+  }
+
   /** Write a draft from a {@link buildDraft} plan. Nothing is sent. */
-  async postDraft(plan: DraftPlan): Promise<Draft> {
+  async postDraft(plan: { message: DraftPlan["message"] }): Promise<Draft> {
     await this.requireScope(SCOPE_COMPOSE);
     return await this.client.request<Draft>("POST", "/drafts", { message: plan.message });
   }
@@ -286,12 +363,7 @@ export class GmailWriter {
         });
       }
     }
-    let signature: SignatureBlock | null = null;
-    if (input.signature) {
-      const list = await listSendAs();
-      const from = list.find((a) => a.isDefault) ?? list.find((a) => a.isPrimary);
-      signature = signatureBlock(from?.signature);
-    }
+    const signature = input.signature ? await this.signatureFrom(await listSendAs()) : null;
     if (!to.length) throw new Error("createDraft: no recipients (pass `to` or a replyToMessageId)");
     const raw = buildRawMessage({
       to,

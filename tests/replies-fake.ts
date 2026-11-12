@@ -22,6 +22,8 @@ export interface FixtureFile {
   inline?: boolean;
   /** Bytes in the part itself (`body.data`), as Gmail does for some small files. */
   embedded?: boolean;
+  /** `body.size` to declare instead of the real length (to test limits without the bytes). */
+  declaredSize?: number;
 }
 
 /** A fixture message, as Gmail's `full` format would describe it. */
@@ -138,7 +140,7 @@ export class FakeGmail {
       ],
       body: f.embedded
         ? { size: f.bytes.length, data: b64url(f.bytes) }
-        : { size: f.bytes.length, attachmentId: `${m.id}-att-${i}` },
+        : { size: f.declaredSize ?? f.bytes.length, attachmentId: `${m.id}-att-${i}` },
     }));
     return { mimeType: "multipart/mixed", headers, body: { size: 0 }, parts: [alt, ...files] };
   }
