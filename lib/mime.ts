@@ -136,8 +136,13 @@ export interface RawMessageInput {
   bcc?: string[];
   /** Subject; non-ASCII is RFC 2047 encoded. */
   subject: string;
-  /** Plain-text body, UTF-8. */
+  /** Plain-text body, UTF-8. Always sent; with `html` it is the plain alternative. */
   text: string;
+  /**
+   * HTML body, UTF-8. With it the body becomes `multipart/alternative` (text, then HTML). Sent as
+   * given: the builder neither sanitises it nor derives the text from it.
+   */
+  html?: string;
   /** Message-ID of the message being replied to. */
   inReplyTo?: string;
   /** References chain, oldest first. */
@@ -190,6 +195,7 @@ export function mimeTypeFor(filename: string): string {
 
 // Starts with "=_", which base64 lines never contain, so it cannot collide with a part body.
 const BOUNDARY = "=_gmail-api_mixed_0";
+const ALT_BOUNDARY = "=_gmail-api_alt_0";
 
 function encodeHeaderWord(value: string): string {
   if (/^[\x20-\x7e]*$/.test(value)) return value;
@@ -224,6 +230,26 @@ function filenameParam(name: string): string {
 }
 
 /** Push `bytes` as base64 in 76-char lines. */
+/** A UTF-8 text part of `type`, base64 encoded, headers and body. */
+function pushTextPart(lines: string[], type: "text/plain" | "text/html", text: string): void {
+  lines.push(`Content-Type: ${type}; charset=UTF-8`);
+  lines.push("Content-Transfer-Encoding: base64");
+  lines.push("");
+  pushBase64(lines, new TextEncoder().encode(text));
+}
+
+/** The body: text alone, or `multipart/alternative` with the text first and the HTML last. */
+function pushBody(lines: string[], input: Pick<RawMessageInput, "text" | "html">): void {
+  if (input.html === undefined) return pushTextPart(lines, "text/plain", input.text);
+  lines.push(`Content-Type: multipart/alternative; boundary="${ALT_BOUNDARY}"`);
+  lines.push("");
+  lines.push(`--${ALT_BOUNDARY}`);
+  pushTextPart(lines, "text/plain", input.text);
+  lines.push(`--${ALT_BOUNDARY}`);
+  pushTextPart(lines, "text/html", input.html);
+  lines.push(`--${ALT_BOUNDARY}--`);
+}
+
 function pushBase64(lines: string[], bytes: Uint8Array): void {
   const b64 = encodeBase64(bytes);
   for (let i = 0; i < b64.length; i += 76) lines.push(b64.slice(i, i + 76));
@@ -245,20 +271,13 @@ export function buildRawMessage(input: RawMessageInput): string {
   if (input.inReplyTo) lines.push(`In-Reply-To: ${input.inReplyTo}`);
   if (input.references?.length) lines.push(`References: ${input.references.join(" ")}`);
   lines.push("MIME-Version: 1.0");
-  const text = new TextEncoder().encode(input.text);
   if (!input.attachments?.length) {
-    lines.push("Content-Type: text/plain; charset=UTF-8");
-    lines.push("Content-Transfer-Encoding: base64");
-    lines.push("");
-    pushBase64(lines, text);
+    pushBody(lines, input);
   } else {
     lines.push(`Content-Type: multipart/mixed; boundary="${BOUNDARY}"`);
     lines.push("");
     lines.push(`--${BOUNDARY}`);
-    lines.push("Content-Type: text/plain; charset=UTF-8");
-    lines.push("Content-Transfer-Encoding: base64");
-    lines.push("");
-    pushBase64(lines, text);
+    pushBody(lines, input);
     for (const a of input.attachments) {
       const type = (a.mimeType ?? mimeTypeFor(a.filename)).replace(/[\r\n]/g, "");
       const param = filenameParam(a.filename.replace(/[\r\n]/g, " "));

@@ -2,9 +2,10 @@
  * Offline tests for drafting: threaded replies, HTML bodies, quoted history, reply-all, signatures,
  * listing, forwarding and updating drafts. Synthetic mailbox only.
  */
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
+import { buildRawMessage } from "../mod.ts";
 import { FakeGmail, type FixtureMessage } from "./replies-fake.ts";
-import { leaves, readRaw, shape } from "./mime-read.ts";
+import { leaves, readRaw, shape, textOf } from "./mime-read.ts";
 
 const ORIGINAL: FixtureMessage = {
   id: "orig",
@@ -52,5 +53,40 @@ Deno.test("regression: a reply draft with an attachment keeps every threading he
   assertEquals(
     readRaw(posted(noReplyTo).message.raw).headers["to"],
     "Sender Name <sender@away.test>",
+  );
+});
+
+Deno.test("builder: text alone, text with HTML, and either with files, as the right MIME tree", () => {
+  const base = { to: ["a@b.test"], subject: "S", text: "Plain — café" };
+  const html = "<p>Rich — <b>café</b></p>";
+  const file = { filename: "f.pdf", content: new Uint8Array([1, 2, 3, 250]) };
+
+  const plain = readRaw(buildRawMessage(base));
+  assertEquals(shape(plain), "text/plain");
+  assertEquals(textOf(plain, "text/plain"), "Plain — café");
+
+  const alt = readRaw(buildRawMessage({ ...base, html }));
+  assertEquals(shape(alt), "multipart/alternative[text/plain,text/html]");
+  assertEquals(textOf(alt, "text/plain"), "Plain — café");
+  assertEquals(textOf(alt, "text/html"), html, "HTML is sent exactly as given");
+  for (const l of leaves(alt)) assert(l.headers["content-type"].includes("charset=UTF-8"));
+
+  const mixed = readRaw(buildRawMessage({ ...base, html, attachments: [file] }));
+  assertEquals(
+    shape(mixed),
+    "multipart/mixed[multipart/alternative[text/plain,text/html],application/pdf]",
+  );
+  assertEquals([...leaves(mixed).find((p) => p.type === "application/pdf")!.body], [1, 2, 3, 250]);
+  assertEquals(textOf(mixed, "text/html"), html);
+
+  assertEquals(
+    shape(readRaw(buildRawMessage({ ...base, attachments: [file] }))),
+    "multipart/mixed[text/plain,application/pdf]",
+    "files without HTML keep the 0.5.0 shape",
+  );
+  assertEquals(
+    buildRawMessage({ ...base, html }),
+    buildRawMessage({ ...base, html }),
+    "deterministic",
   );
 });
