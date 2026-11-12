@@ -11,6 +11,7 @@
  */
 
 import { bodyText } from "./body.ts";
+import { MAX_ATTACHMENT_BYTES } from "./carry.ts";
 import {
   type BodyTail,
   composeBody,
@@ -21,7 +22,7 @@ import {
 import { addRecipients, bareAddress, replyAllRecipients, splitAddresses } from "./recipients.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
-import { GmailApiError, InsufficientScopeError } from "./errors.ts";
+import { AttachmentLimitError, GmailApiError, InsufficientScopeError } from "./errors.ts";
 import { buildRawMessage, header } from "./mime.ts";
 import type {
   Draft,
@@ -37,9 +38,6 @@ import type {
 
 /** Labels a `LabelChange` refuses without `allowSystem`, because touching them archives or trashes. */
 export const GUARDED_SYSTEM_LABELS: readonly string[] = ["TRASH", "SPAM", "INBOX"];
-
-/** Total attachment bytes `createDraft` accepts: Gmail's 25 MB limit on what can be sent. */
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 /** Gmail's per-call ceiling for `messages.batchModify`. */
 export const BATCH_MODIFY_MAX = 1000;
@@ -240,9 +238,7 @@ export class GmailWriter {
     }
     const attachBytes = (input.attachments ?? []).reduce((n, a) => n + a.content.length, 0);
     if (attachBytes > MAX_ATTACHMENT_BYTES) {
-      throw new Error(
-        `createDraft: attachments total ${attachBytes} bytes; Gmail's limit is ${MAX_ATTACHMENT_BYTES}`,
-      );
+      throw new AttachmentLimitError(attachBytes, MAX_ATTACHMENT_BYTES);
     }
     await this.requireScope(SCOPE_COMPOSE);
     let to = input.to ?? [];

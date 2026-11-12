@@ -4,7 +4,9 @@
  */
 import { assert, assertEquals } from "@std/assert";
 import {
+  AttachmentLimitError,
   buildRawMessage,
+  carryAttachments,
   composeBody,
   escapeHtml,
   QUOTE_MAX_CHARS,
@@ -12,6 +14,7 @@ import {
   replyAllRecipients,
   SCOPE_READONLY,
   scrubSignatureHtml,
+  sha256Hex,
   signatureBlock,
   splitAddresses,
   textToHtml,
@@ -463,4 +466,69 @@ Deno.test("guard createDraft: result carries recipients, quoted and signature; l
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+const bytes = (...b: number[]) => new Uint8Array(b);
+const WITH_FILES: FixtureMessage = {
+  ...ORIGINAL,
+  id: "files",
+  files: [
+    { filename: "invoice.pdf", mimeType: "application/pdf", bytes: bytes(37, 80, 68, 70, 0, 255) },
+    { filename: "logo.png", mimeType: "image/png", bytes: bytes(137, 80), inline: true },
+    { filename: "rates.xlsx", mimeType: "application/vnd.ms-excel", bytes: bytes(80, 75, 3, 4) },
+    { filename: "tiny.txt", mimeType: "text/plain", bytes: bytes(104, 105), embedded: true },
+  ],
+};
+
+Deno.test("carry: regular files exact with sha256; inline counted, not carried; embedded kept", async () => {
+  const fake = new FakeGmail([WITH_FILES]);
+  const r = await carryAttachments(fake.client(), "files");
+  assertEquals(r.files.map((f) => [f.filename, f.mimeType, [...f.content]]), [
+    ["invoice.pdf", "application/pdf", [37, 80, 68, 70, 0, 255]],
+    ["rates.xlsx", "application/vnd.ms-excel", [80, 75, 3, 4]],
+    ["tiny.txt", "text/plain", [104, 105]],
+  ]);
+  assertEquals(r.sha256, await Promise.all(r.files.map((f) => sha256Hex(f.content))));
+  assertEquals(r.sha256[0], await sha256Hex(bytes(37, 80, 68, 70, 0, 255)));
+  assertEquals([r.skippedInline, r.totalBytes], [1, 12]);
+  assertEquals(
+    fake.downloads,
+    ["files-att-0", "files-att-2"],
+    "inline and embedded need no download",
+  );
+});
+
+Deno.test("carry: selector, and a message already read", async () => {
+  const fake = new FakeGmail([WITH_FILES]);
+  const c = fake.client();
+  const msg = await c.getMessage("files", "full");
+  const before = fake.calls.length;
+  const r = await carryAttachments(c, msg, { select: (f) => f.filename === "rates.xlsx" });
+  assertEquals(r.files.map((f) => f.filename), ["rates.xlsx"]);
+  assertEquals(fake.calls.slice(before).map((c) => c.path), [
+    "/messages/files/attachments/files-att-2",
+  ]);
+});
+
+Deno.test("carry: the size check runs before any download", async () => {
+  const fake = new FakeGmail([WITH_FILES]);
+  fake.failDownloads = true; // a download would fail loudly; the limit must fire first
+  let err: unknown;
+  try {
+    await carryAttachments(fake.client(), "files", { limit: 11 });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof AttachmentLimitError, String(err));
+  assertEquals([err.totalBytes, err.limit], [12, 11]);
+  assertEquals(fake.downloads, []);
+
+  let err2: unknown;
+  try {
+    await carryAttachments(fake.client(), "files", { limit: 20, addedBytes: 9 });
+  } catch (e) {
+    err2 = e;
+  }
+  assert(err2 instanceof AttachmentLimitError, "added files count toward the limit");
+  assertEquals(fake.downloads, []);
 });

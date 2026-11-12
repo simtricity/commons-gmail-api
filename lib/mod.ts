@@ -7,6 +7,7 @@ export * from "./store.ts";
 export * from "./auth.ts";
 export * from "./client.ts";
 export * from "./attachments.ts";
+export * from "./carry.ts";
 export * from "./writes.ts";
 export * from "./body.ts";
 export * from "./headers.ts";

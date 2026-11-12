@@ -68,3 +68,17 @@ export class OAuthError extends Error {
   /** Error class name, stable across minification. */
   override name = "OAuthError";
 }
+
+/** The files would take a draft over Gmail's limit. Checked before anything is downloaded. */
+export class AttachmentLimitError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "AttachmentLimitError";
+  /**
+   * Build with the sizes that tripped the check.
+   * @param totalBytes The files' total, as declared, plus any the caller adds.
+   * @param limit The limit checked against.
+   */
+  constructor(readonly totalBytes: number, readonly limit: number) {
+    super(`attachments total ${totalBytes} bytes; Gmail's limit is ${limit}`);
+  }
+}
