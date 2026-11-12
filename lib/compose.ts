@@ -79,3 +79,45 @@ export function composeBody(input: ComposeInput): ComposedBody {
   }
   return { text, html };
 }
+
+/** Characters of an original's text kept in a quote. */
+export const QUOTE_MAX_CHARS = 100_000;
+
+/** The original message a quote is built from: its headers as written, and its body as text. */
+export interface QuotedOriginal {
+  /** The `Date` header as written, with its own offset. */
+  date?: string;
+  /** The `From` header as written. */
+  from: string;
+  /** The body as plain text (from `bodyText`). */
+  text: string;
+}
+
+/** `On <date>, <from> wrote:`, or `<from> wrote:` without a date. */
+export function attribution(o: Pick<QuotedOriginal, "date" | "from">): string {
+  return o.date ? `On ${o.date}, ${o.from} wrote:` : `${o.from} wrote:`;
+}
+
+/** The original's text, capped at {@link QUOTE_MAX_CHARS} with a marker. */
+function capped(text: string): string {
+  return text.length > QUOTE_MAX_CHARS
+    ? `${text.slice(0, QUOTE_MAX_CHARS)}\n[… quoted text shortened]`
+    : text;
+}
+
+/**
+ * The quoted history under a reply, as Gmail writes it: the attribution, then the original with
+ * each line prefixed `> ` in text, and inside Gmail's `gmail_quote` wrapper in HTML, so Gmail
+ * folds it. The HTML holds only the escaped text: none of the original's HTML, scripts or images.
+ */
+export function quoteBlock(original: QuotedOriginal): BodyTail {
+  const body = capped(original.text);
+  const attr = attribution(original);
+  const quoted = body.split(/\r?\n/).map((l) => (l ? `> ${l}` : ">")).join("\n");
+  return {
+    text: `${attr}\n${quoted}`,
+    html: `<div class="gmail_quote"><div class="gmail_attr">${escapeHtml(attr)}<br></div>` +
+      `<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">` +
+      `${textToHtml(body)}</blockquote></div>`,
+  };
+}

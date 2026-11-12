@@ -10,7 +10,8 @@
  * @module
  */
 
-import { composeBody } from "./compose.ts";
+import { bodyText } from "./body.ts";
+import { type BodyTail, composeBody, quoteBlock } from "./compose.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
 import { GmailApiError, InsufficientScopeError } from "./errors.ts";
@@ -18,6 +19,7 @@ import { buildRawMessage, header } from "./mime.ts";
 import type {
   Draft,
   DraftInput,
+  DraftPlan,
   Label,
   LabelChange,
   LabelOptions,
@@ -190,20 +192,41 @@ export class GmailWriter {
   // ── Drafts ─────────────────────────────────────────────────────────────────
 
   /**
-   * Create a plain-text draft, optionally with file attachments (total at most
-   * {@link MAX_ATTACHMENT_BYTES}, checked before any network call). With `replyToMessageId` the draft lands in that thread with
-   * In-Reply-To/References set and, unless given, `to` from the original's Reply-To or From and
-   * subject `Re: …`. Nothing is sent; there is no send method in this package.
+   * Create a draft: plain text, or text and HTML, optionally with file attachments (total at most
+   * {@link MAX_ATTACHMENT_BYTES}, checked before any network call). With `replyToMessageId` the
+   * draft lands in that thread with In-Reply-To/References set, `to` from the original's Reply-To
+   * or From and subject `Re: …` unless given, and the original quoted underneath unless
+   * `quote: false`. Nothing is sent; there is no send method in this package.
    */
   async createDraft(input: DraftInput): Promise<Draft> {
+    const plan = await this.buildDraft(input);
+    return await this.client.request<Draft>("POST", "/drafts", { message: plan.message });
+  }
+
+  /**
+   * Build the message {@link createDraft} would post, reading the original when replying, and say
+   * what went into it. Writes nothing. Needs the compose grant, like the write it prepares.
+   */
+  async buildDraft(input: DraftInput): Promise<DraftPlan> {
+    const attachBytes = (input.attachments ?? []).reduce((n, a) => n + a.content.length, 0);
+    if (attachBytes > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `createDraft: attachments total ${attachBytes} bytes; Gmail's limit is ${MAX_ATTACHMENT_BYTES}`,
+      );
+    }
     await this.requireScope(SCOPE_COMPOSE);
     let to = input.to ?? [];
     let subject = input.subject;
     let inReplyTo: string | undefined;
     let references: string[] | undefined;
     let threadId: string | undefined;
+    let tail: BodyTail | null = null;
     if (input.replyToMessageId) {
-      const orig = await this.client.getMessage(input.replyToMessageId, "metadata");
+      const quote = input.quote !== false;
+      const orig = await this.client.getMessage(
+        input.replyToMessageId,
+        quote ? "full" : "metadata",
+      );
       threadId = orig.threadId;
       const msgId = header(orig.payload, "Message-ID") ?? header(orig.payload, "Message-Id");
       inReplyTo = msgId;
@@ -217,28 +240,32 @@ export class GmailWriter {
         const s = header(orig.payload, "Subject") ?? "";
         subject = /^re:/i.test(s) ? s : `Re: ${s}`;
       }
+      if (quote) {
+        tail = quoteBlock({
+          date: header(orig.payload, "Date"),
+          from: header(orig.payload, "From") ?? "",
+          text: bodyText(orig).text,
+        });
+      }
     }
     if (!to.length) throw new Error("createDraft: no recipients (pass `to` or a replyToMessageId)");
-    const attachBytes = (input.attachments ?? []).reduce((n, a) => n + a.content.length, 0);
-    if (attachBytes > MAX_ATTACHMENT_BYTES) {
-      throw new Error(
-        `createDraft: attachments total ${attachBytes} bytes; Gmail's limit is ${MAX_ATTACHMENT_BYTES}`,
-      );
-    }
-    const body = composeBody({ text: input.text, html: input.html });
+    const cc = input.cc ?? [];
+    const bcc = input.bcc ?? [];
     const raw = buildRawMessage({
       to,
-      cc: input.cc,
-      bcc: input.bcc,
+      cc,
+      bcc,
       subject: subject ?? "",
-      ...body,
+      ...composeBody({ text: input.text, html: input.html, tail }),
       inReplyTo,
       references,
       attachments: input.attachments,
     });
-    const message: { raw: string; threadId?: string } = { raw };
-    if (threadId) message.threadId = threadId;
-    return await this.client.request<Draft>("POST", "/drafts", { message });
+    return {
+      message: threadId ? { raw, threadId } : { raw },
+      recipients: { to, cc, bcc },
+      quoted: tail !== null,
+    };
   }
 
   /** Delete a draft. Irreversible, but a draft is only ever local to the mailbox. */

@@ -254,8 +254,23 @@ export interface DraftInput {
   html?: string;
   /** Reply in the thread of this message: sets threadId, In-Reply-To and References. */
   replyToMessageId?: string;
+  /**
+   * Quote the original under the reply, as Gmail does. Default true when replying; ignored
+   * otherwise. The quote is the original's text, escaped: never its HTML.
+   */
+  quote?: boolean;
   /** Files to attach, as bytes. The library never reads paths; callers load the files. */
   attachments?: DraftAttachment[];
+}
+
+/** A draft built but not yet written: the message, and what went into it. */
+export interface DraftPlan {
+  /** The `message` resource to post: the raw RFC 5322 bytes, and the thread when replying. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** True when the original was quoted under the reply. */
+  quoted: boolean;
 }
 
 /** A file attached to a draft. */
