@@ -109,7 +109,8 @@ async function secret(ctx: Context): Promise<ClientSecret> {
   return await loadClientSecretFile(ctx.clientSecretPath);
 }
 
-async function client(ctx: Context): Promise<GmailClient> {
+/** A signed-in client for the context's grant. */
+export async function client(ctx: Context): Promise<GmailClient> {
   return await GmailClient.fromStore({
     clientSecret: await secret(ctx),
     store: ctx.store,

@@ -3,6 +3,95 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.7.0] - 2026-11-15
+
+### Added
+
+- **Scoped bulk relabels on `GuardedWriter`**: `createScopedLabel(prefix, name)`,
+  `planScopedRelabel(req)` and `scopedRelabel({ prefix, add, remove, ids, apply })` for bulk
+  jobs that own a label prefix. No id cap; applied in chunks of `BATCH_MODIFY_MAX`. Every label
+  added or removed must start with the prefix. Refusals, all before any request, in this order:
+  `bad-scope` (prefix empty or not ending in `/`), `outside-scope`, `system-label`,
+  `no-such-label` (`add` missing). Dry run unless `apply`. `remove` names that do not exist are
+  skipped, and `add` is never also removed. Nothing to do is a no-op with no request and no
+  log line.
+- An applied scoped relabel appends one `label.relabel` line to the write log with `prefix`,
+  `add`, `remove`, `count` and `idsSha256` (sha256 of the sorted ids joined by a newline) in
+  place of the ids. `idsSha256(ids)` is exported so a caller can match its own id list to the log.
+- If a chunk fails part-way (a quota refusal, a dropped connection), the line is still written
+  before the error is rethrown, with `partial: true`, `callsDone` (chunks applied, in `ids`
+  order) and `error` (class name and HTTP status, never the body).
+- `ScopedRelabelRequest`, `ScopedRelabelPlan` and `ScopedRelabelResult` types.
+- **Organise engine** at the new `./organise` entry point (`@simtricity-commons/gmail-api/organise`):
+  envelope reading, the sent-mail correspondent corpus and relationships, the sender policy,
+  sampling, throttling, golden-set parsing and the `decide` triage routes with
+  `DEFAULT_THRESHOLDS` and `mergeThresholds`. The root entry point does not import it.
+  `./organise` also re-exports the core `Message`, `MessagePart`, `MessagePartBody` and
+  `MessagePartHeader` types its functions take. Every exported symbol is documented.
+- The organise test fixtures use only reserved domains (`.example`, `.test`).
+- **Schemes** (`./organise`): `Scheme`, `labelFor` and `labelPrefixOf`, and `triageScheme()`,
+  the four-verdict engine as a scheme. It decides exactly as `decide()` with the engine's own
+  routes and default thresholds, and labels by each message's own UTC year.
+- `TRIAGE_DEFAULT_QUESTIONS`: generic wording for the eight triage questions, so triage runs
+  with no question file. One phrase in `carries_private_data` reads "data exports" rather
+  than an industry-specific term; wording is overridable per question.
+- `choiceScheme()`: a declarative scheme over one Choice question; the winning option is the
+  category, sender rulings decide first, and an unanswered message goes to an unlabelled option.
+- `parseProfile()` and `ProfileError`: a JSON profile naming the schemes to run. Every field has a
+  default and an absent `schemes` means generic triage, so `{}` is a working profile. Label
+  prefixes that nest and questions defined two ways are refused.
+- `questionsFor()`, `questionHash()` and `pendingQuestions()`: all schemes' questions in one model
+  call per message, and answers stored with the hash they were asked under, so rewording one
+  question re-asks only it.
+- Golden sets per scheme: `parseGolden(raw, categories?)` fills in each case's scheme, `score()`
+  scores one scheme, and `withRuling()` / `withSenderRuling()` record rulings without mutating.
+- `relabelPlan()`: decisions into batched label changes, each adding one label and removing the
+  scheme's others for that year in the same call.
+- `SystemOneJudge` behind a `Judge` interface: a client for TypeSafe's System One endpoint with an
+  injected key and `fetch`, its own retries for 429, 5xx and network failures, and
+  `SystemOneError` (status, body, reason) whose message never carries the key or the body.
+- **`Organiser`**: the whole pipeline over one data directory, `capture → corpus → sample →
+  fetch → judge → decide → score → apply → reconcile`, plus `explain`, `find`, `rule` and
+  `runs`. Gmail, the decision model, the writer and the clock are injected; it reads and writes
+  only under the directory it is given, never the environment or a default path. Files are
+  written whole, 0600, in 0700 directories.
+  - `capture` keeps sent or received metadata in yearly shards, incrementally; `sample` draws a
+    deterministic sample that never includes a thread you replied into; `fetch` reads it paced
+    to Gmail's per-user quota, rejects single-message threads that have since grown without
+    reading them, and resumes.
+  - `judge` asks only what is unanswered or was asked under different wording, and records
+    every pass and its token use; `decide`, `score`, `explain` and `find` work from stored
+    files alone.
+  - `apply` is a dry run unless `apply: true`, changes only messages whose labels differ from
+    their decision, and keeps every applied change, ids included, in
+    `runs/<run>/apply.<scheme>.log` with the same `idsSha256` the guard logs. A change refused
+    part-way is logged with the chunks that landed before the error is rethrown.
+  - `reconcile` compares the labels in Gmail with the decisions; `rule` records a golden case
+    and optionally a sender ruling, validated before either file is written.
+- **CLI `organise <verb>`** for every stage and `whoami`, with `--json` on every verb and exit
+  codes for scripts: 0 done, 1 usage or unexpected, 2 a missing grant or model key, 3 a critical
+  `score` failure, 4 a `reconcile` mismatch, 5 a stage that finished with failures. The data
+  directory defaults to `~/.simt/gmail-api/organise` (`GMAIL_ORGANISE_DATA`); the model key is
+  `TYPESAFE_API_KEY`. The CLI is not published.
+- README "Organising a mailbox", `examples/organise/profile.json` and
+  `examples/organise-triage.ts`.
+
+### Changed
+
+- `scopedRelabel` (new in this release) throws `ScopedRelabelError` when a chunk fails part-way,
+  carrying `callsDone`, `idsSha256` and `status`, with the original error as its `cause`, so a
+  caller can record which ids landed. The write log's `partial` line is unchanged.
+- `withRetry` (`./organise`) takes `quotaBaseMs`, the first wait after a quota refusal; the
+  default stays 8000 ms.
+- `./organise` golden-set refusals are `ProfileError` (a subclass of `Error`), and `GoldenCase`
+  holds categories as strings with an optional `scheme`.
+- `WriteGuardError.code` adds `"bad-scope"` and `"outside-scope"`. A consumer that switches
+  exhaustively over the codes will need the two new cases.
+- `labelChange` and its 25-id cap are unchanged.
+- `GMAIL_API_NOTES.md`: `label:` in a search takes the label's name with `/` and spaces written
+  as `-`, not its id as the notes said. New notes on the per-minute unit quota, counting thread
+  sizes by listing, sender and mailing-list quirks, and Noul versus Choice answers.
+
 ## [0.6.1] - 2026-11-15
 
 A failed token refresh no longer signs you out. Previously any error answer from Google's token

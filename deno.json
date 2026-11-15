@@ -1,8 +1,11 @@
 {
   "name": "@simtricity-commons/gmail-api",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "license": "MIT",
-  "exports": "./mod.ts",
+  "exports": {
+    ".": "./mod.ts",
+    "./organise": "./organise.ts"
+  },
   "publish": {
     "exclude": [
       "tests/",
@@ -14,9 +17,9 @@
   },
   "tasks": {
     "cli": "deno run --allow-net --allow-env --allow-read --allow-write --allow-run=open,xdg-open cli/mod.ts",
-    "test": "deno test --allow-read --allow-write tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts tests/token-refresh-test.ts",
+    "test": "deno test --allow-read --allow-write --allow-env=COMMONS_DENYLIST tests/boundary-test.ts tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/scoped-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts tests/token-refresh-test.ts tests/organise-isolation-test.ts tests/organise/",
     "test:live": "deno test --allow-net --allow-env --allow-read --allow-write tests/live-test.ts",
-    "check": "deno check mod.ts cli/mod.ts tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts tests/token-refresh-test.ts tests/live-test.ts tests/live-write-test.ts examples/thread-attachments.ts",
+    "check": "deno check mod.ts organise.ts cli/mod.ts tests/organise/ tests/boundary-test.ts tests/unit-test.ts tests/writes-test.ts tests/readsearch-guard-test.ts tests/scoped-guard-test.ts tests/provenance-test.ts tests/bounce-test.ts tests/token-refresh-test.ts tests/organise-isolation-test.ts tests/live-test.ts tests/live-write-test.ts examples/thread-attachments.ts examples/organise-triage.ts",
     "publish:dry": "deno publish --dry-run --allow-dirty",
     "test:live:write": "deno test --allow-net --allow-env --allow-read --allow-write tests/live-write-test.ts"
   },
@@ -28,6 +31,13 @@
     "@std/fs": "jsr:@std/fs@^1.0.19"
   },
   "fmt": {
-    "lineWidth": 100
+    "lineWidth": 100,
+    "exclude": [
+      "tests/organise/fakes.ts",
+      "tests/organise/fakes_test.ts",
+      "tests/organise/fixtures.ts",
+      "tests/organise/organise_contract_test.ts",
+      "tests/organise/triage-questions.default.json"
+    ]
   }
 }

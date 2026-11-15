@@ -24,13 +24,13 @@ deno task publish:dry    # validate the JSR package before tagging
 
 ## Provenance
 
-Ported from an internal Simtricity Gmail probe (loopback OAuth flow, MIME walk, revoke-then-delete).
+Ported from an internal Gmail probe (loopback OAuth flow, MIME walk, revoke-then-delete).
 Tenant keying, TTL sweeps, date floors and cursors were deliberately NOT ported — that is consumer
 policy, expressed as a custom `TokenStore` on top of this client.
 
 ## Consumers
 
-Internal Simtricity tooling (a personal Claude skill for attachment retrieval; planned:
+Internal tooling (a personal Claude skill for attachment retrieval; planned:
 email-ingress adapters and supplier-document pipelines). Consumers import from JSR.
 
 ## Specs
@@ -47,7 +47,7 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
   those is a new decision and a new spec. The write grant lives in `credentials.modify.json`, never
   in `credentials.json`.
 - Never log or echo the client secret, refresh token, or attachment ids in error text.
-- Config lives in `~/.simt/gmail-api/` (Simtricity convention: `~/.simt/` holds all local tool
+- Config lives in `~/.simt/gmail-api/` (workspace convention: `~/.simt/` holds all local tool
   config). `client-secret.json` is the Desktop-app OAuth client; `credentials.json` the per-mailbox
   grants; `credentials.modify.json` the write grants (`login --write`). Env overrides:
   `GMAIL_CLIENT_SECRET_PATH`, `GMAIL_API_CREDENTIALS`, `GMAIL_API_CREDENTIALS_MODIFY`.
@@ -70,6 +70,6 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
   `-in:chats`) and output. Keep new Gmail behaviour here, not in the skill. `lib/` must import
   nothing beyond `globToRegExp`, `join`, `resolve`, `dirname` from `@std/path` (the skill shims
   exactly those because hosted sandboxes 403 jsr.io).
-- Planned: MGF supplier-paper pipelines, importing from JSR.
+- Planned: supplier-paper pipelines in an operator workspace, importing from JSR.
 - `skipExisting` (0.2.0) originated as a skill-side workaround; it now lives in `selector()` so the
   double-reporting the skill had to suppress is gone.

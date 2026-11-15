@@ -1,16 +1,22 @@
 /**
- * `GuardedWriter` — the policy layer every interactive caller (CLI, agent skill) should use
- * for writes. It wraps `GmailWriter` and adds the rules that stop a person or an agent from
- * doing more than they meant: an id cap per call, no system labels, plan-then-apply for label
- * changes, idempotent label creation, and one JSON line per applied write in a log.
+ * `GuardedWriter` — the policy layer for writes. It wraps `GmailWriter` and adds the rules that
+ * stop a person or an agent from doing more than they meant, and one JSON line per applied
+ * write in a log. Two kinds of caller:
  *
- * Bulk consumers that have already decided what to do (e.g. a classifier labelling 50,000
- * messages) use `GmailWriter` directly and skip these guards on purpose.
+ * - **Interactive** (CLI, agent skill): `labelChange` — an id cap per call (default 25), no
+ *   system labels, plan-then-apply, idempotent label creation.
+ * - **Bulk, inside a prefix it owns** (e.g. a classifier labelling 50,000 messages under
+ *   `sorter/`): `createScopedLabel` / `planScopedRelabel` / `scopedRelabel` — no id cap, but
+ *   every label added or removed must sit under the caller's prefix, and the log records a hash
+ *   of the ids rather than the ids.
+ *
+ * `GmailWriter` stays the unguarded layer for code that has already decided everything itself.
  * @module
  */
 
+import { sha256Hex } from "./mime.ts";
 import type { Draft, DraftInput, Label } from "./types.ts";
-import type { GmailWriter } from "./writes.ts";
+import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
 /** Default per-call id cap. */
 export const DEFAULT_MAX_IDS = 25;
@@ -91,18 +97,91 @@ export class WriteGuardError extends Error {
   override name = "WriteGuardError";
   /**
    * Build with a machine-readable code.
-   * @param code Which rule refused: `no-ids`, `too-many-ids`, `no-such-label`, `system-label`.
+   * @param code Which rule refused: `no-ids`, `too-many-ids`, `no-such-label`, `system-label`,
+   *   and for scoped relabels `bad-scope` (prefix empty or not ending in `/`) and
+   *   `outside-scope` (a label name outside the prefix).
    * @param message Human-readable reason.
    */
   constructor(
-    readonly code: "no-ids" | "too-many-ids" | "no-such-label" | "system-label",
+    readonly code:
+      | "no-ids"
+      | "too-many-ids"
+      | "no-such-label"
+      | "system-label"
+      | "bad-scope"
+      | "outside-scope",
     message: string,
   ) {
     super(message);
   }
 }
 
-/** Policy wrapper over `GmailWriter` for interactive and agent callers. */
+/**
+ * A scoped relabel failed part-way. The chunks before the failure are applied in Gmail and the
+ * write log has a `partial` line for them; this error says the same, so a caller can record what
+ * landed. The original error is the `cause`.
+ */
+export class ScopedRelabelError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "ScopedRelabelError";
+  /** HTTP status of the failed request, when the cause carried one. */
+  readonly status?: number;
+  /**
+   * Build from the failed request's error.
+   * @param callsDone Chunks applied before the failure, in `ids` order: the first
+   *   `callsDone x BATCH_MODIFY_MAX` ids landed.
+   * @param idsSha256 The request's `idsSha256`, as the write log has it.
+   * @param cause The error the failed chunk raised.
+   */
+  constructor(readonly callsDone: number, readonly idsSha256: string, cause: unknown) {
+    super(
+      `scoped relabel failed after ${callsDone} applied chunk(s): ${
+        cause instanceof Error ? cause.name : typeof cause
+      }`,
+      { cause },
+    );
+    const status = (cause as { status?: unknown })?.status;
+    if (typeof status === "number") this.status = status;
+  }
+}
+
+/** Input to {@link GuardedWriter.planScopedRelabel} and {@link GuardedWriter.scopedRelabel}. */
+export interface ScopedRelabelRequest {
+  /** The caller's label prefix. Non-empty and ends in `/`, e.g. `sorter/`. */
+  prefix: string;
+  /** Label to add. Must start with `prefix`, exist, and not be a system label. */
+  add?: string;
+  /** Labels to remove. Each must start with `prefix`; names that do not exist yet are skipped. */
+  remove: string[];
+  /** Message ids. No cap: applied in chunks of `BATCH_MODIFY_MAX`. */
+  ids: string[];
+}
+
+/** A scoped relabel that has been validated but not applied. */
+export interface ScopedRelabelPlan {
+  /** Always `label.relabel`. */
+  op: "label.relabel";
+  /** The prefix every label here sits under. */
+  prefix: string;
+  /** The resolved label to add, if any. */
+  add?: { id: string; name: string };
+  /** The resolved labels to remove: missing names skipped, `add` never among them. */
+  remove: { id: string; name: string }[];
+  /** Message ids, de-duplicated, in the order given. */
+  ids: string[];
+  /** `ids.length`. */
+  count: number;
+}
+
+/** Outcome of {@link GuardedWriter.scopedRelabel}. */
+export type ScopedRelabelResult =
+  & ScopedRelabelPlan
+  & (
+    | { dryRun: true; applied?: never; calls?: never }
+    | { applied: true; calls: number; dryRun?: never }
+  );
+
+/** Policy wrapper over `GmailWriter` for interactive, agent and prefix-scoped bulk callers. */
 export class GuardedWriter {
   /** Effective per-call id cap. */
   readonly maxIds: number;
@@ -208,4 +287,123 @@ export class GuardedWriter {
       sent: false,
     };
   }
+
+  // ── Scoped bulk relabels ──────────────────────────────────────────────────
+
+  /** Refuse an unusable prefix, then any name outside it. */
+  private checkScope(prefix: string, names: string[]): void {
+    if (!prefix || !prefix.endsWith("/")) {
+      throw new WriteGuardError(
+        "bad-scope",
+        `prefix ${JSON.stringify(prefix)} must be non-empty and end in "/"`,
+      );
+    }
+    const outside = names.filter((n) => !n.startsWith(prefix));
+    if (outside.length) {
+      throw new WriteGuardError(
+        "outside-scope",
+        `${outside.map((n) => JSON.stringify(n)).join(", ")} outside prefix ${
+          JSON.stringify(prefix)
+        }`,
+      );
+    }
+  }
+
+  /** Create a label inside `prefix` (parents too) unless it exists. Logs only a real create. */
+  async createScopedLabel(prefix: string, name: string): Promise<CreateLabelResult> {
+    this.checkScope(prefix, [name]);
+    return await this.createLabel(name);
+  }
+
+  /**
+   * Validate a bulk relabel inside one prefix and resolve its labels. No write, no log.
+   * Refusals, in order: `bad-scope`, `outside-scope`, `system-label`, `no-such-label`.
+   * `remove` names that do not exist are skipped, and `add` is never also removed.
+   */
+  async planScopedRelabel(req: ScopedRelabelRequest): Promise<ScopedRelabelPlan> {
+    this.checkScope(req.prefix, [...(req.add !== undefined ? [req.add] : []), ...req.remove]);
+    const removeNames = [...new Set(req.remove)].filter((n) => n !== req.add);
+    const addLabel = req.add !== undefined ? await this.writer.findLabel(req.add) : undefined;
+    const removeLabels = (await Promise.all(removeNames.map((n) => this.writer.findLabel(n))))
+      .filter((l): l is Label => !!l);
+    const system = [addLabel, ...removeLabels].find((l) => l?.type === "system");
+    if (system) {
+      throw new WriteGuardError("system-label", `refusing system label ${system.name}`);
+    }
+    if (req.add !== undefined && !addLabel) {
+      throw new WriteGuardError(
+        "no-such-label",
+        `no label named ${JSON.stringify(req.add)}; create it first`,
+      );
+    }
+    const ids = [...new Set(req.ids.map((x) => x.trim()).filter(Boolean))];
+    return {
+      op: "label.relabel",
+      prefix: req.prefix,
+      ...(addLabel ? { add: { id: addLabel.id, name: addLabel.name } } : {}),
+      remove: removeLabels.map((l) => ({ id: l.id, name: l.name })),
+      ids,
+      count: ids.length,
+    };
+  }
+
+  /**
+   * Plan, then apply only when `apply` is true. The default is a dry run. Applied in chunks of
+   * `BATCH_MODIFY_MAX`; one log line per call, with `idsSha256` (sha256 of the sorted ids
+   * joined by `\n`) in place of the ids. If a chunk fails, the line is still written, with
+   * `partial: true`, `callsDone` (chunks applied, in `ids` order) and `error` (class name and
+   * HTTP status only), and a {@link ScopedRelabelError} carrying the same, with the original as
+   * its `cause`, is thrown. Nothing to add, nothing to remove or no ids is
+   * a no-op: no request, no log line.
+   */
+  async scopedRelabel(
+    req: ScopedRelabelRequest & { apply?: boolean },
+  ): Promise<ScopedRelabelResult> {
+    const plan = await this.planScopedRelabel(req);
+    if (!req.apply) return { ...plan, dryRun: true };
+    if (!plan.count || (!plan.add && !plan.remove.length)) {
+      return { ...plan, applied: true, calls: 0 };
+    }
+    const change = {
+      ...(plan.add ? { addLabelIds: [plan.add.id] } : {}),
+      removeLabelIds: plan.remove.map((l) => l.id),
+    };
+    const line = {
+      op: plan.op,
+      prefix: plan.prefix,
+      add: plan.add ?? null,
+      remove: plan.remove,
+      count: plan.count,
+      idsSha256: await idsSha256(plan.ids),
+    };
+    // Chunked here, one request per chunk, so a failure part-way still knows how many landed.
+    let calls = 0;
+    try {
+      for (let i = 0; i < plan.ids.length; i += BATCH_MODIFY_MAX) {
+        await this.writer.batchModifyMessages(plan.ids.slice(i, i + BATCH_MODIFY_MAX), change);
+        calls++;
+      }
+    } catch (e) {
+      // Chunks 1..calls are applied in Gmail; record them before rethrowing. Ids follow
+      // plan.ids order, so the first calls x BATCH_MODIFY_MAX ids are the ones that landed.
+      const status = (e as { status?: unknown }).status;
+      await this.record({
+        ...line,
+        partial: true,
+        callsDone: calls,
+        error: {
+          name: e instanceof Error ? e.name : typeof e,
+          ...(typeof status === "number" ? { status } : {}),
+        },
+      });
+      throw new ScopedRelabelError(calls, line.idsSha256, e);
+    }
+    await this.record(line);
+    return { ...plan, applied: true, calls };
+  }
+}
+
+/** sha256 hex of ids sorted and joined by `\n`: how scoped relabels log ids without listing them. */
+export async function idsSha256(ids: readonly string[]): Promise<string> {
+  return await sha256Hex(new TextEncoder().encode([...ids].sort().join("\n")));
 }

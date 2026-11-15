@@ -52,14 +52,25 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   count, which matches what `attachments.get` returns.
 - Gmail's web UI URLs use `FMfcgz…` tokens for threads in the new UI; these are **not** API ids and
   cannot be converted client-side. Legacy `#inbox/<16-hex>` URLs are API ids.
-- `messages.list` `q` uses full Gmail search syntax; `label:` needs label **ids** (`Label_7`), not
-  names. Drafts appear in `messages.list` unless excluded with `-in:draft`.
+- `messages.list` `q` uses full Gmail search syntax. `label:` takes the label's **name as search
+  spells it**: lower case, with `/` and spaces written as `-`, so `a/b c` is `label:a-b-c`. The
+  organiser lists label members this way. (Ids go in the separate `labelIds` parameter.) Drafts
+  appear in `messages.list` unless excluded with `-in:draft`.
+- **Check thread size with one listing pass, not a read per thread.** Every `messages.list` entry
+  carries its `threadId`, so listing the whole mailbox (5 units a page of 500) counts messages per
+  thread far more cheaply than a `threads.get` (10 units) per candidate.
 - Attachments larger than ~25 MB are Drive links in the body, not MIME parts.
 
 ## Quotas
 
 - 250 quota units/user/second. `messages.get` = 5 units, `attachments.get` = 5, `messages.list` = 5,
   `threads.get` = 10. A thread fetch with N files costs ~10 + 5N.
+- **The ceiling that binds is units per user per minute, and it is lower than the documented
+  figure suggests.** In calibration on one mailbox about 30 units a second held and 50 was refused
+  ("Units per minute per user"). Metadata reads topped out near 6 a second whatever the
+  concurrency, because round-trip latency rose in step: extra requests in flight only queue
+  server-side. Past the ceiling every retry is refused too and a run collapses, so pace by units,
+  not concurrency. The organiser reads 4 messages a second and reports its quota retries.
 
 ## Writes (labels, drafts) — probed 2026-09-22 under `gmail.modify` + `gmail.compose`
 
@@ -97,5 +108,34 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   the draft's message returns the exact bytes sent.
 - Quota exhaustion arrives as HTTP 403 with reason `rateLimitExceeded`, not 429. Permission failures
   are also 403 (`insufficientPermissions`); branch on `GmailApiError.reason`. Quota windows are per
-  minute, so backoff under ~8 s cannot outlive one. Metadata reads throttle at ~6/s regardless of
-  concurrency (reported by the gmail-organiser work).
+  minute, so backoff under ~8 s cannot outlive one; the organiser's quota retries start at 8 s.
+  Metadata reads throttle at ~6/s regardless of concurrency (see Quotas).
+
+## Senders and lists (observed while calibrating the organiser)
+
+- **Never read addresses out of a display name.** `From` headers carry things like
+  `"'no-reply@vendor.example' via redirect" <real@sender.example>` and
+  `"jo jo@old.example" <jo@new.example>`. Reading every address in the header promotes that free
+  text to a sender. `senderOf` reads only the angle brackets.
+- **Auto-replies inflate a sent-mail corpus.** Vacation responders are sent mail too; in
+  calibration on one mailbox they were close to a quarter of it, and added domains that genuine
+  correspondence never touched. The corpus counts them separately.
+- **A public webmail domain confers no trust.** Writing to several people at one provider makes the
+  whole domain look known, so a stranger on the same provider inherits that. Trust such domains per
+  address only.
+- **LISTSERV lists carry neither `List-Post` nor `List-Id`**, only `List-Unsubscribe`, which makes
+  them look like newsletters. The return path (`owner-<list>@host`) is what marks them.
+- **A Google Group you own rewrites `From` to the group**, so relayed mail appears to come from one
+  of your own addresses. The author is in `X-Original-Sender`.
+- **A mass mailing signed by a person reads as personal to a model.** The envelope (VERP return
+  paths, `List-Unsubscribe`) is the better witness of a campaign than the text.
+
+## Decision-model answers: Noul versus Choice
+
+A Noul answer is a single probability with nothing to redistribute; across identical calls it
+moved by under 0.02 in calibration. A Choice answer's confidence measures how peaked the
+distribution is across the options offered, so it shifts whenever probability mass moves between
+them: the same measurement saw it swing by up to 0.12, enough to flip a label across a threshold.
+More options, or richer descriptions of them, lower it further even when the chosen answer
+improves. Gate irreversible actions on Noul probabilities; treat Choice confidence as a soft
+signal. This is why a choice scheme takes the chosen option and never gates on its confidence.
