@@ -3,7 +3,7 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [0.6.1] - unreleased
+## [0.6.1] - 2026-11-15
 
 A failed token refresh no longer signs you out. Previously any error answer from Google's token
 endpoint, including a momentary 429 or 503, deleted the saved sign-in and reported "Not signed
