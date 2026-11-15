@@ -6,7 +6,7 @@
  * @module
  */
 
-import { OAuthError } from "./errors.ts";
+import { OAuthError, type OAuthErrorDetail, TokenEndpointError } from "./errors.ts";
 import type { ClientSecret, OAuthCredential } from "./types.ts";
 
 /** The only scope this package uses unless a caller explicitly widens it. */
@@ -322,33 +322,101 @@ export function isAccessTokenStale(
   return new Date(cred.accessTokenExpiresAt).getTime() - now.getTime() < 60_000;
 }
 
-/** Mint a fresh access token. Throws {@link OAuthError} if Google rejects the refresh token. */
+/** Options for {@link refreshAccessToken}. */
+export interface RefreshOptions {
+  /** Transport override for tests. Default: global `fetch`. */
+  fetch?: typeof globalThis.fetch;
+  /** Attempts for a failure that can pass (429, 5xx, no response). Default 3. */
+  attempts?: number;
+  /** First wait between attempts in ms, doubling. Default 1000. */
+  retryBaseMs?: number;
+  /** Called before each wait, with the attempt that failed. */
+  onRetry?: (failed: { attempt: number } & OAuthErrorDetail) => void;
+}
+
+/** The `error` and `error_description` of a token-endpoint error body, when it has them. */
+async function oauthErrorBody(res: Response): Promise<OAuthErrorDetail> {
+  const text = await res.text().catch(() => "");
+  try {
+    const j = JSON.parse(text) as { error?: unknown; error_description?: unknown };
+    return {
+      ...(typeof j.error === "string" ? { code: j.error } : {}),
+      ...(typeof j.error_description === "string" ? { description: j.error_description } : {}),
+    };
+  } catch {
+    // fallback: a non-JSON error body (a proxy page, say) carries no OAuth code.
+    return {};
+  }
+}
+
+/**
+ * Mint a fresh access token.
+ *
+ * - Google refusing the sign-in (`invalid_grant`, `invalid_client`, or any other 4xx but 429)
+ *   throws {@link OAuthError} at once, with Google's status, code and description. Only a new
+ *   login fixes that.
+ * - A failure that can pass (429, a 5xx, or no response) is retried, then thrown as
+ *   {@link TokenEndpointError}.
+ *
+ * Never throws for a reason that would justify forgetting the credential: deciding what to do
+ * with it is the caller's job.
+ */
 export async function refreshAccessToken(
   clientSecret: ClientSecret,
   cred: OAuthCredential,
+  opts: RefreshOptions = {},
 ): Promise<OAuthCredential> {
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      refresh_token: cred.refreshToken,
-      client_id: clientSecret.clientId,
-      client_secret: clientSecret.clientSecret,
-      grant_type: "refresh_token",
-    }),
-  });
-  if (!res.ok) {
-    throw new OAuthError(
-      `Google rejected the stored credential (${res.status}).`,
-    );
+  const fetchImpl = opts.fetch ?? globalThis.fetch;
+  const attempts = Math.max(1, opts.attempts ?? 3);
+  const base = opts.retryBaseMs ?? 1000;
+  let last: TokenEndpointError | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let res: Response | undefined;
+    try {
+      res = await fetchImpl(TOKEN_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          refresh_token: cred.refreshToken,
+          client_id: clientSecret.clientId,
+          client_secret: clientSecret.clientSecret,
+          grant_type: "refresh_token",
+        }),
+      });
+    } catch (e) {
+      last = new TokenEndpointError("Could not reach Google's token endpoint.", {}, { cause: e });
+    }
+    if (res?.ok) {
+      const tok = await res.json() as { access_token: string; expires_in: number };
+      return {
+        ...cred,
+        accessToken: tok.access_token,
+        accessTokenExpiresAt: new Date(Date.now() + tok.expires_in * 1000).toISOString(),
+      };
+    }
+    if (res) {
+      const detail = { status: res.status, ...await oauthErrorBody(res) };
+      if (res.status !== 429 && res.status < 500) {
+        const why = detail.code
+          ? `${detail.code}${detail.description ? `: ${detail.description}` : ""}`
+          : `HTTP ${res.status}`;
+        throw new OAuthError(`Google rejected the saved sign-in (${why}).`, detail);
+      }
+      last = new TokenEndpointError(
+        `Google's token endpoint answered ${res.status}${detail.code ? ` (${detail.code})` : ""}.`,
+        detail,
+      );
+    }
+    if (attempt < attempts) {
+      opts.onRetry?.({
+        attempt,
+        ...(last?.status !== undefined ? { status: last.status } : {}),
+        ...(last?.code !== undefined ? { code: last.code } : {}),
+      });
+      await new Promise((r) => setTimeout(r, base * 2 ** (attempt - 1)));
+    }
   }
-  const tok = await res.json() as { access_token: string; expires_in: number };
-  return {
-    ...cred,
-    accessToken: tok.access_token,
-    accessTokenExpiresAt: new Date(Date.now() + tok.expires_in * 1000)
-      .toISOString(),
-  };
+  throw last!;
 }
 
 /** Revoke a refresh (or access) token at Google. Resolves true on 200. */

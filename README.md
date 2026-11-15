@@ -148,6 +148,10 @@ duplicates, `TRASH` reachable via modify) are in `GMAIL_API_NOTES.md`.
    change). Set `GMAIL_NO_BROWSER=1` on a headless box and open the printed URL yourself.
 3. Credentials land in `~/.simt/gmail-api/credentials.json`, mode 0600, one entry per mailbox.
    `GMAIL_API_CREDENTIALS` overrides the path.
+4. Sign-in events (logins, logouts, refresh retries and failures, never tokens) are appended to
+   `~/.simt/gmail-api/auth.log` (`GMAIL_API_AUTH_LOG` to move it). If a command says the sign-in
+   was rejected, `deno task cli whoami` shows when you signed in and the last refresh failure,
+   and the log has the history.
 
 ## Design notes
 

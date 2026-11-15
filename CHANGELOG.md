@@ -3,6 +3,40 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.6.1] - 2026-11-15
+
+A failed token refresh no longer signs you out. Previously any error answer from Google's token
+endpoint, including a momentary 429 or 503, deleted the saved sign-in and reported "Not signed
+in", so a passing outage at Google forced a new login. Now only a real refusal asks for one, the
+credential is always kept, and every failure is recorded so the cause can be read afterwards.
+
+### Fixed
+
+- A token refresh that fails is never a reason to delete the stored credential. `GmailClient`
+  keeps it and records the failure on it; a new `login` replaces it.
+- Failures that can pass (429, a 5xx, or no response) are retried three times with doubling waits
+  (1 s, 2 s) before `TokenEndpointError` is thrown. They no longer surface as "Not signed in".
+- A refusal (`invalid_grant`, `invalid_client`, any other 4xx) throws `NotSignedInError` naming
+  Google's code and description, e.g. "Google rejected the saved sign-in (invalid_grant: Token
+  has been expired or revoked.). Run login.", with the `OAuthError` as its `cause`.
+
+### Added
+
+- `OAuthError` carries `status`, `code` and `description` from Google's answer.
+- `TokenEndpointError` for a token-endpoint failure that can pass, with the last `status` and
+  `code`.
+- `refreshAccessToken(secret, cred, opts?)` takes `fetch`, `attempts`, `retryBaseMs` and
+  `onRetry`.
+- `GmailClientOptions.onAuthEvent` receives sign-in events (`refresh-retry`,
+  `refresh-recovered`, `refresh-failed`, `refresh-rejected`) for the caller's own log; they never
+  carry a token. `refreshRetryBaseMs` sets the first wait between refresh attempts.
+- `OAuthCredential` records `lastRefreshAt` and `lastRefreshError` (`RefreshFailure`: time,
+  status, code and whether Google refused).
+- CLI: sign-in events, logins and logouts are appended to `~/.simt/gmail-api/auth.log` (0600,
+  JSON lines, `GMAIL_API_AUTH_LOG` to move it). `whoami` shows when you signed in, the grant's
+  age, the last refresh and the last refresh failure, and where the log is. A refused or failed
+  refresh names the log, and a failure of the write grant names `login --write`.
+
 ## [0.6.0] - 2026-10-04
 
 Reading a message now shows where it really came from, where its links go, and, for a bounce,
