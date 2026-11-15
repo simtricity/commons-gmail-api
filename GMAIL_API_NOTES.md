@@ -18,6 +18,21 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   `userinfo.email` scope needed.
 - `revoke` accepts either token type; revoking the refresh token kills the whole grant.
 
+- **Why a refresh token stops working.** The token endpoint answers `400 invalid_grant` for all
+  of these, and its `error_description` rarely says which:
+  - the consent screen is in Testing (7 days, above);
+  - the account's password was changed (for grants with Gmail scopes);
+  - the grant was removed at myaccount.google.com/permissions, or by a Workspace admin;
+  - more than 50 refresh tokens exist for one client and account (each login mints one; the
+    oldest is revoked);
+  - the token went unused for six months.
+
+  An Internal app in its own Workspace has no 7-day limit. A Workspace "Google Cloud session
+  control" re-authentication policy applies only to apps that ask for the `cloud-platform`
+  scope.
+- The token endpoint also answers 429 and 5xx, briefly. Those are not refusals: retry, and keep
+  the credential. Treating every non-2xx as revoked turns a passing blip into a forced login.
+
 ## Messages / threads
 
 - `messages.get?format=full` returns the MIME tree with `body.attachmentId` for parts above a small

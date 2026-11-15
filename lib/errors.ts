@@ -63,8 +63,65 @@ export class InsufficientScopeError extends Error {
   }
 }
 
-/** The OAuth dance itself failed (bind, exchange, refresh, revoke). */
+/** Google's OAuth error detail, when the failure was an HTTP response from it. */
+export interface OAuthErrorDetail {
+  /** HTTP status. */
+  status?: number;
+  /** Google's OAuth `error` code, e.g. `invalid_grant`. */
+  code?: string;
+  /** Google's `error_description`. */
+  description?: string;
+}
+
+/**
+ * The OAuth dance itself failed (bind, exchange, refresh, revoke). For a refresh, this means
+ * Google refused the saved sign-in outright (`invalid_grant`, `invalid_client`, any other 4xx):
+ * retrying will not help, and only a new login will.
+ */
 export class OAuthError extends Error {
   /** Error class name, stable across minification. */
   override name = "OAuthError";
+  /** HTTP status from Google, when there was one. */
+  readonly status?: number;
+  /** Google's OAuth `error` code, e.g. `invalid_grant`. */
+  readonly code?: string;
+  /** Google's `error_description`. */
+  readonly description?: string;
+
+  /**
+   * Build with Google's detail.
+   * @param message Human-readable reason; never carries a token or secret.
+   * @param detail Google's status, error code and description, when known.
+   */
+  constructor(message: string, detail: OAuthErrorDetail = {}) {
+    super(message);
+    if (detail.status !== undefined) this.status = detail.status;
+    if (detail.code !== undefined) this.code = detail.code;
+    if (detail.description !== undefined) this.description = detail.description;
+  }
+}
+
+/**
+ * Google's token endpoint failed in a way that can pass: 429, a 5xx, or no response at all.
+ * Thrown after the refresh's own retries. The saved sign-in is kept; try again later.
+ */
+export class TokenEndpointError extends Error {
+  /** Error class name, stable across minification. */
+  override name = "TokenEndpointError";
+  /** HTTP status of the last attempt; absent when Google could not be reached. */
+  readonly status?: number;
+  /** Google's OAuth `error` code from the last attempt, when it sent one. */
+  readonly code?: string;
+
+  /**
+   * Build with the last attempt's detail.
+   * @param message Human-readable reason.
+   * @param detail Status and error code of the last attempt.
+   * @param options `cause`: the network error, when there was no response.
+   */
+  constructor(message: string, detail: OAuthErrorDetail = {}, options?: ErrorOptions) {
+    super(message, options);
+    if (detail.status !== undefined) this.status = detail.status;
+    if (detail.code !== undefined) this.code = detail.code;
+  }
 }
