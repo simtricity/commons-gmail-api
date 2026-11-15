@@ -78,10 +78,30 @@ export interface ReplyHeaders {
 }
 
 /**
+ * Where a reply to your own message goes: its To without you, or, when it went only to you (a
+ * note to yourself, a send-as alias), its To as written. Gmail does the same.
+ */
+function ownTo(h: ReplyHeaders, self: Set<string>): string[] {
+  const others = distinct(splitAddresses(h.to), self);
+  return others.length ? others : distinct(splitAddresses(h.to), new Set());
+}
+
+/**
+ * Plain-reply recipients, as Gmail chooses them: the original's Reply-To, else its From; but when
+ * the original is your own message, its To (without you, unless it went only to you).
+ */
+export function replyRecipients(h: ReplyHeaders, self: Set<string>): string[] {
+  return self.has(bareAddress(h.from ?? ""))
+    ? ownTo(h, self)
+    : distinct(splitAddresses(h.replyTo || h.from), new Set());
+}
+
+/**
  * Reply-all recipients for an original, given the account holder's own addresses (bare,
  * lower-cased). From someone else: `to` is the Reply-To, else From; `cc` is the original's To
- * and Cc. From yourself: `to` is the original's To and `cc` its Cc. Self is always removed, `cc`
- * never repeats `to`, and Bcc is never computed.
+ * and Cc. From yourself: `to` is the original's To and `cc` its Cc. Self is removed (except from
+ * `to` when the original went only to you, which then keeps its To as written), `cc` never
+ * repeats `to`, and Bcc is never computed.
  */
 export function replyAllRecipients(
   h: ReplyHeaders,
@@ -89,7 +109,7 @@ export function replyAllRecipients(
 ): { to: string[]; cc: string[] } {
   const fromSelf = self.has(bareAddress(h.from ?? ""));
   if (fromSelf) {
-    const to = distinct(splitAddresses(h.to), self);
+    const to = ownTo(h, self);
     const cc = distinct(splitAddresses(h.cc), new Set([...self, ...to.map(bareAddress)]));
     return { to, cc };
   }
