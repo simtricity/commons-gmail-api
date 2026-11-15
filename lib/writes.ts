@@ -21,7 +21,13 @@ import {
   type SignatureBlock,
   signatureBlock,
 } from "./compose.ts";
-import { addRecipients, bareAddress, replyAllRecipients, splitAddresses } from "./recipients.ts";
+import {
+  addRecipients,
+  bareAddress,
+  replyAllRecipients,
+  replyRecipients,
+  splitAddresses,
+} from "./recipients.ts";
 import { SCOPE_COMPOSE, SCOPE_MODIFY } from "./auth.ts";
 import type { GmailClient } from "./client.ts";
 import {
@@ -217,7 +223,9 @@ export class GmailWriter {
       sendAs ?? this.client.listSendAs(),
     ]);
     return new Set(
-      [profile.emailAddress, ...list.map((s) => s.sendAsEmail)].map(bareAddress).filter(Boolean),
+      [profile.emailAddress, ...list.map((s) => s.sendAsEmail)]
+        .filter((a): a is string => typeof a === "string" && a.length > 0)
+        .map(bareAddress),
     );
   }
 
@@ -341,9 +349,12 @@ export class GmailWriter {
     }
 
     const h = (name: string) => header(msg.payload, name);
-    const to = input.to ?? splitAddresses(h("To"));
-    const cc = input.cc ?? splitAddresses(h("Cc"));
-    const bcc = input.bcc ?? splitAddresses(h("Bcc"));
+    // An empty list is not an instruction to clear: argument parsers hand over [] for an absent
+    // flag, and an edit must never lose a recipient the draft had. Recipients come only from the
+    // draft's own headers; nothing is recomputed from the original.
+    const to = input.to?.length ? input.to : splitAddresses(h("To"));
+    const cc = input.cc?.length ? input.cc : splitAddresses(h("Cc"));
+    const bcc = input.bcc?.length ? input.bcc : splitAddresses(h("Bcc"));
     const inReplyTo = h("In-Reply-To");
     const references = h("References")?.split(/\s+/).filter(Boolean);
     const old = existingBody(msg);
@@ -475,7 +486,11 @@ export class GmailWriter {
         if (!input.to?.length) to = all.to;
         cc = addRecipients([], [...all.cc, ...(input.cc ?? [])], to);
       } else if (!to.length) {
-        to = splitAddresses(header(orig.payload, "Reply-To") || header(orig.payload, "From"));
+        to = replyRecipients({
+          from: header(orig.payload, "From"),
+          replyTo: header(orig.payload, "Reply-To"),
+          to: header(orig.payload, "To"),
+        }, await this.selfAddresses(await listSendAs()));
       }
       if (!subject) {
         const s = header(orig.payload, "Subject") ?? "";

@@ -3,6 +3,24 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.8.1] - 2026-11-15
+
+### Fixed
+
+- **`updateDraft` dropped To, Cc and Bcc when a caller passed empty lists.** Argument parsers can
+  hand over `[]` for an absent repeatable flag (the `simt:gmail` skill's does), and `[]` was read
+  as "replace with nothing", so the edited draft lost its recipients. An absent or empty `to`,
+  `cc` or `bcc` now keeps the draft's own header; a non-empty one replaces it whole. Recipients
+  on an edit come only from the draft's headers, never from the original.
+- **Replying to your own message sent only to yourself** (a note to yourself, a send-as alias)
+  threw "no recipients", because removing your own addresses left nothing. Reply-all now
+  addresses the original's To as written in that case; Cc keeps the self filter and Bcc is still
+  never computed.
+- **A plain reply to your own message** went back to you (its From). It now goes where Gmail
+  sends it: the original's To without you, or its To as written when it went only to you.
+  `replyRecipients()` is exported. Working out whether the original is yours costs a plain
+  reply one profile read and one send-as read, unless `to` is given.
+
 ## [0.8.0] - 2026-11-15
 
 ### Added

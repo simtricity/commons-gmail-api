@@ -408,11 +408,11 @@ export interface UpdateDraftInput {
   html?: string;
   /** New subject. */
   subject?: string;
-  /** New To, replacing the old one whole. */
+  /** New To, replacing the old one whole. Absent or empty: the draft's To is kept. */
   to?: string[];
-  /** New Cc, replacing the old one whole. */
+  /** New Cc, replacing the old one whole. Absent or empty: the draft's Cc is kept. */
   cc?: string[];
-  /** New Bcc, replacing the old one whole. */
+  /** New Bcc, replacing the old one whole. Absent or empty: the draft's Bcc is kept. */
   bcc?: string[];
   /** Files to add. */
   addAttachments?: DraftAttachment[];

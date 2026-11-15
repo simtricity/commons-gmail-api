@@ -329,7 +329,18 @@ Deno.test("createDraft replyAll: computed recipients, caller to replaces, caller
   const before = sendAsReads();
   const plain = await writer.buildDraft({ replyToMessageId: "orig", text: "x", quote: false });
   assertEquals(plain.recipients, { to: ["Sender Name <sender@away.test>"], cc: [], bcc: [] });
-  assertEquals(sendAsReads(), before, "a plain reply reads no send-as");
+  assertEquals(
+    sendAsReads(),
+    before + 1,
+    "a plain reply reads send-as once, to know if it is yours",
+  );
+  await writer.buildDraft({
+    replyToMessageId: "orig",
+    text: "x",
+    to: ["a@away.test"],
+    quote: false,
+  });
+  assertEquals(sendAsReads(), before + 1, "a reply with a given to reads none");
 });
 
 Deno.test("createDraft replyAll without replyToMessageId is a TypeError before any call", async () => {
@@ -932,4 +943,102 @@ Deno.test("one composer: create, update and forward give identical bodies for id
     }),
   });
   assertEquals([textOf(fm, "text/plain"), textOf(fm, "text/html")], [wantF.text, wantF.html]);
+});
+
+// ── 0.8.1: defects from the live test ──────────────────────────────────────
+
+Deno.test("updateDraft with empty recipient lists (as an argument parser may pass) keeps To, Cc, Bcc", async () => {
+  // reply draft
+  const { writer, raw } = await replyDraft();
+  const p = await writer.buildUpdate({ draftId: "d1", text: "v2", to: [], cc: [], bcc: [] });
+  const [a, b] = [readRaw(raw), readRaw(p.message.raw)];
+  for (const k of ["to", "cc", "bcc"]) assertEquals(b.headers[k], a.headers[k], `reply draft ${k}`);
+  assert(p.recipients.to.length > 0);
+
+  // new-message draft
+  const fake = new FakeGmail();
+  const w = fake.writers().writer;
+  await w.createDraft({
+    to: ["Jo <jo@away.test>"],
+    cc: ["kim@away.test"],
+    bcc: ["hid@away.test"],
+    subject: "S",
+    text: "v1",
+  });
+  const before = readRaw(fake.drafts.get("d1")!.message.raw!);
+  const q = await w.buildUpdate({ draftId: "d1", text: "v2", to: [], cc: [], bcc: [] });
+  const after = readRaw(q.message.raw);
+  for (const k of ["to", "cc", "bcc", "subject"]) {
+    assertEquals(after.headers[k], before.headers[k], k);
+  }
+  assertEquals(q.recipients, {
+    to: ["Jo <jo@away.test>"],
+    cc: ["kim@away.test"],
+    bcc: ["hid@away.test"],
+  });
+});
+
+Deno.test("updateDraft replacing only cc keeps to and bcc", async () => {
+  const { writer, raw } = await replyDraft();
+  const p = await writer.buildUpdate({ draftId: "d1", cc: ["new@away.test"] });
+  const [a, b] = [readRaw(raw), readRaw(p.message.raw)];
+  assertEquals(b.headers["to"], a.headers["to"]);
+  assertEquals(b.headers["bcc"], a.headers["bcc"]);
+  assertEquals(b.headers["cc"], "new@away.test");
+});
+
+const SELF_TO_SELF: FixtureMessage = {
+  ...ORIGINAL,
+  id: "self",
+  headers: {
+    ...ORIGINAL.headers,
+    "From": `Owner <${OWNER}>`,
+    "To": "Me Too <alias@home.test>",
+    "Reply-To": "",
+  },
+};
+
+Deno.test("reply-all to your own message sent only to yourself goes to its To, unfiltered", () => {
+  const self = new Set([OWNER, "alias@home.test"]);
+  assertEquals(
+    replyAllRecipients(
+      { from: `Owner <${OWNER}>`, to: "Me Too <alias@home.test>", cc: OWNER },
+      self,
+    ),
+    { to: ["Me Too <alias@home.test>"], cc: [] },
+    "to falls back to the original's To; cc keeps the self filter",
+  );
+});
+
+Deno.test("createDraft replyAll and plain reply on a self-to-self message: to = its To; no Bcc", async () => {
+  for (const replyAll of [true, false]) {
+    const fake = new FakeGmail([SELF_TO_SELF]);
+    delete fake.messages.get("self")!.headers["Reply-To"];
+    fake.sendAs.push({ sendAsEmail: "alias@home.test" });
+    const p = await fake.writers().writer.buildDraft({
+      replyToMessageId: "self",
+      text: "note to self",
+      replyAll,
+      quote: false,
+    });
+    assertEquals(
+      p.recipients,
+      { to: ["Me Too <alias@home.test>"], cc: [], bcc: [] },
+      `replyAll=${replyAll}`,
+    );
+  }
+});
+
+Deno.test("plain reply to your own message to someone else goes to that someone, as Gmail does", async () => {
+  const fake = new FakeGmail([{
+    ...SELF_TO_SELF,
+    headers: { ...SELF_TO_SELF.headers, "To": `Jo <jo@away.test>, ${OWNER}` },
+  }]);
+  delete fake.messages.get("self")!.headers["Reply-To"];
+  const p = await fake.writers().writer.buildDraft({
+    replyToMessageId: "self",
+    text: "x",
+    quote: false,
+  });
+  assertEquals(p.recipients.to, ["Jo <jo@away.test>"]);
 });
