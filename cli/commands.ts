@@ -408,9 +408,14 @@ export async function draftCreate(
   opts: {
     to?: string[];
     cc?: string[];
+    bcc?: string[];
     subject?: string;
     text: string;
+    html?: string;
     replyTo?: string;
+    replyAll?: boolean;
+    quote?: boolean;
+    signature?: boolean;
     attach?: string[];
   },
 ): Promise<void> {
@@ -425,9 +430,14 @@ export async function draftCreate(
     attachments: attachments.length ? attachments : undefined,
     to: opts.to,
     cc: opts.cc,
+    bcc: opts.bcc,
     subject: opts.subject,
     text: opts.text,
+    html: opts.html,
     replyToMessageId: opts.replyTo ? parseGmailId(opts.replyTo) : undefined,
+    replyAll: opts.replyAll,
+    quote: opts.quote,
+    signature: opts.signature,
   });
   out(ctx, r, () => {
     const d = r.draft;
@@ -436,8 +446,127 @@ export async function draftCreate(
         d.message.threadId ? `, thread ${d.message.threadId}` : ""
       }). Not sent.`,
     );
+    printRecipients(r.recipients);
+    if (r.quoted) console.log("   original quoted below");
+    if (r.signature !== "off") {
+      console.log(r.signature === "added" ? "   signature added" : "   no signature set");
+    }
     for (const a of attachments) console.log(`   📎 ${a.filename} (${a.content.length} bytes)`);
     console.log(r.url);
+  });
+}
+
+export async function draftForward(
+  ctx: Context,
+  opts: {
+    message: string;
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    text?: string;
+    html?: string;
+    files: "all" | "none" | string[];
+    signature?: boolean;
+  },
+): Promise<void> {
+  const r = await (await guarded(ctx)).forwardDraft({
+    messageId: parseGmailId(opts.message),
+    to: opts.to,
+    cc: opts.cc,
+    bcc: opts.bcc,
+    text: opts.text,
+    html: opts.html,
+    attachments: opts.files,
+    signature: opts.signature,
+  });
+  out(ctx, r, () => {
+    const d = r.draft;
+    console.log(
+      `forward draft ${d.id} created (message ${d.message.id}${
+        d.message.threadId ? `, thread ${d.message.threadId}` : ""
+      }). Not sent.`,
+    );
+    printRecipients(r.recipients);
+    console.log(`   ${r.carried.count} file(s) carried, ${r.carried.totalBytes} bytes`);
+    if (r.skippedInline) {
+      console.log(`   ⚠ ${r.skippedInline} inline image(s) not carried (logos, pasted images)`);
+    }
+    if (r.signature !== "off") {
+      console.log(r.signature === "added" ? "   signature added" : "   no signature set");
+    }
+    console.log(r.url);
+  });
+}
+
+export async function draftUpdate(
+  ctx: Context,
+  opts: {
+    draftId: string;
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject?: string;
+    text?: string;
+    html?: string;
+    attach?: string[];
+    remove?: string[];
+    quote?: boolean;
+    signature?: boolean;
+    expectMessageId?: string;
+  },
+): Promise<void> {
+  // Files are read here, not in lib/: the library takes bytes and never touches paths.
+  const add = await Promise.all(
+    (opts.attach ?? []).map(async (p) => ({
+      filename: basename(p),
+      content: await Deno.readFile(p),
+    })),
+  );
+  const g = await guarded(ctx);
+  // Pass the message id read now, so an edit made in Gmail meanwhile is refused, not overwritten.
+  const expectMessageId = opts.expectMessageId ??
+    (await g.writer.client.getDraft(opts.draftId, "minimal")).message.id;
+  const r = await g.updateDraft({
+    draftId: opts.draftId,
+    to: opts.to,
+    cc: opts.cc,
+    bcc: opts.bcc,
+    subject: opts.subject,
+    text: opts.text,
+    html: opts.html,
+    addAttachments: add.length ? add : undefined,
+    removeAttachments: opts.remove,
+    quote: opts.quote,
+    signature: opts.signature,
+    expectMessageId,
+  });
+  out(ctx, r, () => {
+    console.log(
+      `draft ${r.draft.id} updated (message ${r.previousMessageId} → ${r.draft.message.id}). Not sent.`,
+    );
+    printRecipients(r.recipients);
+    console.log(`   body ${r.body}${r.quoted ? ", original quoted" : ""}`);
+    console.log(
+      `   ${r.kept.count} file(s) kept unchanged, ${r.added} added, ${r.removed} removed`,
+    );
+    console.log(r.url);
+  });
+}
+
+/** To, Cc and Bcc on their own lines; Cc and Bcc only when present. */
+function printRecipients(r: { to: string[]; cc: string[]; bcc: string[] }): void {
+  console.log(`   To:  ${r.to.join(", ")}`);
+  if (r.cc.length) console.log(`   Cc:  ${r.cc.join(", ")}`);
+  if (r.bcc.length) console.log(`   Bcc: ${r.bcc.join(", ")}`);
+}
+
+export async function drafts(ctx: Context, opts: { max?: number; q?: string }): Promise<void> {
+  const list = await (await client(ctx)).listDrafts(opts);
+  out(ctx, list, () => {
+    if (!list.length) return console.log("no drafts");
+    for (const d of list) {
+      console.log(`${d.id}  ${d.date}\n   ${d.subject || "(no subject)"}\n   To: ${d.to}`);
+    }
   });
 }
 

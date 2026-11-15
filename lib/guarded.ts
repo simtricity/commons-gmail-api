@@ -15,7 +15,17 @@
  */
 
 import { sha256Hex } from "./mime.ts";
-import type { Draft, DraftInput, Label } from "./types.ts";
+import type {
+  CarriedSummary,
+  Draft,
+  DraftInput,
+  DraftPlan,
+  ForwardInput,
+  ForwardPlan,
+  Label,
+  UpdateDraftInput,
+  UpdatePlan,
+} from "./types.ts";
 import { BATCH_MODIFY_MAX, type GmailWriter } from "./writes.ts";
 
 /** Default per-call id cap. */
@@ -89,6 +99,56 @@ export interface CreateDraftResult {
   url: string;
   /** Always false: this package cannot send. */
   sent: false;
+  /** Every recipient, exactly as written into the message. */
+  recipients: DraftPlan["recipients"];
+  /** True when the original was quoted under the reply. */
+  quoted: boolean;
+  /** `added`; `none` when asked for but no signature is set; `off` when not asked for. */
+  signature: DraftPlan["signature"];
+}
+
+/** Outcome of {@link GuardedWriter.forwardDraft}. */
+export interface ForwardDraftResult {
+  /** The draft as Gmail returned it. */
+  draft: Draft;
+  /** Link that opens the draft in Gmail's web UI. */
+  url: string;
+  /** Always false: this package cannot send. */
+  sent: false;
+  /** Every recipient, exactly as written into the message. */
+  recipients: ForwardPlan["recipients"];
+  /** The files carried from the original, with their sha256. */
+  carried: CarriedSummary;
+  /** Inline parts not carried: say so when it matters (a logo, a pasted screenshot). */
+  skippedInline: number;
+  /** `added`, `none` or `off`, as for a new draft. */
+  signature: ForwardPlan["signature"];
+}
+
+/** Outcome of {@link GuardedWriter.updateDraft}. */
+export interface UpdateDraftResult {
+  /** The draft as Gmail returned it: same draft id, new message id. */
+  draft: Draft;
+  /** Link that opens the draft in Gmail's web UI. */
+  url: string;
+  /** Always false: this package cannot send. */
+  sent: false;
+  /** The message id before the edit. */
+  previousMessageId: string;
+  /** Every recipient, exactly as written into the message. */
+  recipients: UpdatePlan["recipients"];
+  /** `kept` or `rebuilt`. */
+  body: UpdatePlan["body"];
+  /** Files kept, with sha256: the same bytes as before the edit. */
+  kept: UpdatePlan["kept"];
+  /** Files added. */
+  added: number;
+  /** Files removed. */
+  removed: number;
+  /** True when the body holds a quote of the original. */
+  quoted: boolean;
+  /** As in {@link UpdatePlan.signature}. */
+  signature: UpdatePlan["signature"];
 }
 
 /** A guard refused the request. Nothing was sent to Gmail. */
@@ -264,14 +324,22 @@ export class GuardedWriter {
     return { ...plan, applied: true };
   }
 
-  /** Create a draft and log it (attachment filenames and sizes, never content). Never sends. */
+  /**
+   * Create a draft and log it: ids, recipient counts (never addresses), whether it quoted or
+   * signed, and attachment filenames and sizes (never content). Never sends.
+   */
   async createDraft(input: DraftInput): Promise<CreateDraftResult> {
-    const draft = await this.writer.createDraft(input);
+    const plan = await this.writer.buildDraft(input);
+    const draft = await this.writer.postDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
     await this.record({
       op: "draft.create",
       draftId: draft.id,
       messageId: draft.message.id,
       threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      quoted: plan.quoted,
+      signature: plan.signature,
       ...(input.attachments?.length
         ? {
           attachments: input.attachments.map((a) => ({
@@ -285,6 +353,77 @@ export class GuardedWriter {
       draft,
       url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
       sent: false,
+      recipients: plan.recipients,
+      quoted: plan.quoted,
+      signature: plan.signature,
+    };
+  }
+
+  /**
+   * Forward a message as a draft, with its files, in its thread, as Gmail's Forward does. Logs
+   * recipient counts, the carried files' count, bytes and sha256, and the inline parts skipped:
+   * never names or addresses. Never sends.
+   */
+  async forwardDraft(input: ForwardInput): Promise<ForwardDraftResult> {
+    const plan = await this.writer.buildForward(input);
+    const draft = await this.writer.postDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
+    await this.record({
+      op: "draft.forward",
+      draftId: draft.id,
+      messageId: draft.message.id,
+      threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      carried: plan.carried,
+      skippedInline: plan.skippedInline,
+      signature: plan.signature,
+    });
+    return {
+      draft,
+      url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
+      sent: false,
+      recipients: plan.recipients,
+      carried: plan.carried,
+      skippedInline: plan.skippedInline,
+      signature: plan.signature,
+    };
+  }
+
+  /**
+   * Edit a draft, keeping everything not given (recipients, subject, thread, body, files). Refuses
+   * rather than loses (inline images, unreadable files) and refuses a draft edited elsewhere since
+   * it was read. Logs counts, kept sha256 and the ids, never names or addresses. Never sends.
+   */
+  async updateDraft(input: UpdateDraftInput): Promise<UpdateDraftResult> {
+    const plan = await this.writer.buildUpdate(input);
+    const draft = await this.writer.putDraft(plan);
+    const { to, cc, bcc } = plan.recipients;
+    await this.record({
+      op: "draft.update",
+      draftId: draft.id,
+      messageId: draft.message.id,
+      previousMessageId: plan.previousMessageId,
+      threadId: draft.message.threadId ?? null,
+      recipients: { to: to.length, cc: cc.length, bcc: bcc.length },
+      body: plan.body,
+      kept: plan.kept,
+      added: plan.added,
+      removed: plan.removed,
+      quoted: plan.quoted,
+      signature: plan.signature,
+    });
+    return {
+      draft,
+      url: `https://mail.google.com/mail/u/0/#drafts?compose=${draft.message.id}`,
+      sent: false,
+      previousMessageId: plan.previousMessageId,
+      recipients: plan.recipients,
+      body: plan.body,
+      kept: plan.kept,
+      added: plan.added,
+      removed: plan.removed,
+      quoted: plan.quoted,
+      signature: plan.signature,
     };
   }
 

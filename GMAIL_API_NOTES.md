@@ -106,6 +106,24 @@ Observed while building and testing this client. Vendor behaviour, not ours.
   `/upload/…?uploadType=multipart` endpoint is not needed under the 25 MB send limit. Gmail
   parses RFC 2231 `filename*=UTF-8''…` back into the plain filename, and `attachments.get` on
   the draft's message returns the exact bytes sent.
+- Forwards (observed 2026-11-12, one forward written by Gmail's web Forward, read with
+  `read --headers`): the forward carries `In-Reply-To` set to the original's `Message-ID` and
+  `References` ending with that same id, and it stays in the **original's thread** (its
+  `threadId` is the original's, not its own). Header order: `MIME-Version`, `Date`,
+  `References`, `In-Reply-To`, `Message-ID`, `Subject`, `From`, `To`, `Content-Type`. Subject
+  prefix `Fwd:`. The body starts the forwarded block with `---------- Forwarded message ---------`
+  (ten dashes before, nine after), then `From:`, `Date:`, `Subject:` and `To:` lines (`Cc:` when
+  the original had one), a blank line, and the original's text unprefixed. Files travel as
+  ordinary attachments in `multipart/mixed`. `forwardDraft` copies this threading. Also seen: a
+  search on `subject:Fwd` matches replies in a forwarded thread (`Re: Fwd: …`); anchor on the
+  prefix to find true forwards.
+- `drafts.update` (`PUT /drafts/{id}`) replaces the draft's whole message: anything not in the
+  new `raw` is gone, so an edit must rebuild every header and carry every file. The draft id
+  stays; the message id changes on every update, which is what `updateDraft` uses to detect an
+  edit made in Gmail meanwhile. `drafts.get` with `format=full` returns the message like
+  `messages.get`. The API's part schema allows a file's bytes inline in `body.data` with no
+  `attachmentId`; not seen on a draft yet, but `carryAttachments` carries both forms so an edit
+  cannot drop one.
 - Quota exhaustion arrives as HTTP 403 with reason `rateLimitExceeded`, not 429. Permission failures
   are also 403 (`insufficientPermissions`); branch on `GmailApiError.reason`. Quota windows are per
   minute, so backoff under ~8 s cannot outlive one; the organiser's quota retries start at 8 s.

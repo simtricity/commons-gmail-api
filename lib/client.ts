@@ -8,11 +8,12 @@
 
 import { isAccessTokenStale, refreshAccessToken, revokeToken } from "./auth.ts";
 import { GmailApiError, NotSignedInError, OAuthError, TokenEndpointError } from "./errors.ts";
-import { decodeBase64Url, listAttachments } from "./mime.ts";
+import { decodeBase64Url, header, listAttachments } from "./mime.ts";
 import type {
   AttachmentRef,
   AuthEvent,
   ClientSecret,
+  DraftSummary,
   Label,
   Message,
   MessageFormat,
@@ -20,6 +21,7 @@ import type {
   OAuthCredential,
   Profile,
   RefreshFailure,
+  SendAs,
   Thread,
   TokenStore,
 } from "./types.ts";
@@ -235,6 +237,45 @@ export class GmailClient {
   /** The signed-in mailbox's profile: address and message/thread counts. */
   profile(): Promise<Profile> {
     return this.get<Profile>("/profile");
+  }
+
+  /** One draft, with its message in `format` (default `full`). */
+  getDraft(id: string, format: MessageFormat = "full"): Promise<{ id: string; message: Message }> {
+    return this.get<{ id: string; message: Message }>(
+      `/drafts/${encodeURIComponent(id)}?format=${format}`,
+    );
+  }
+
+  /** The mailbox's send-as addresses: the primary and any aliases, with their signatures. */
+  listSendAs(): Promise<SendAs[]> {
+    return this.get<{ sendAs?: SendAs[] }>("/settings/sendAs").then((r) => r.sendAs ?? []);
+  }
+
+  /**
+   * The mailbox's drafts, newest first, at most `max` (default 20), optionally filtered by a
+   * Gmail search `q`. Each draft's message is read as metadata for its subject, recipients and
+   * date. Read-only: works with the read grant or the compose grant.
+   */
+  async listDrafts(opts: { max?: number; q?: string } = {}): Promise<DraftSummary[]> {
+    const max = opts.max ?? 20;
+    const params = new URLSearchParams({ maxResults: String(max) });
+    if (opts.q) params.set("q", opts.q);
+    const res = await this.get<{ drafts?: { id: string; message: { id: string } }[] }>(
+      `/drafts?${params}`,
+    );
+    const out: DraftSummary[] = [];
+    for (const d of (res.drafts ?? []).slice(0, max)) {
+      const m = await this.getMessage(d.message.id, "metadata");
+      out.push({
+        id: d.id,
+        messageId: m.id,
+        threadId: m.threadId,
+        subject: header(m.payload, "Subject") ?? "",
+        to: header(m.payload, "To") ?? "",
+        date: header(m.payload, "Date") ?? "",
+      });
+    }
+    return out;
   }
 
   /** All labels visible to the mailbox. */

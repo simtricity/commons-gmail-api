@@ -3,6 +3,60 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.8.0] - 2026-11-15
+
+### Added
+
+- **Quoted history in replies.** `DraftInput.quote` (default on with `replyToMessageId`) puts
+  `On <Date>, <From> wrote:` and the original under the reply, in Gmail's `gmail_quote` markup.
+  The quote is the original's text, HTML-escaped, capped at `QUOTE_MAX_CHARS` (100,000) with a
+  marker; none of the original's HTML is carried. `quoteBlock()` and `attribution()` are exported.
+- **HTML bodies.** `DraftInput.html` is sent as given, as `multipart/alternative` with `text`;
+  with files it nests in `multipart/mixed`.
+- **One composer.** `composeBody({ text, html?, signature?, tail? })` assembles every draft body
+  (new text, signature, then a quote or forwarded block); `escapeHtml` and `textToHtml` helpers.
+- **Reply-all.** `DraftInput.replyAll`: Gmail's rules, your own addresses (profile and every
+  send-as) removed, never a computed Bcc; a given `to` replaces, a given `cc` adds. Needs
+  `replyToMessageId` (a `TypeError` before any request). `splitAddresses`, `bareAddress`,
+  `replyAllRecipients` and `addRecipients` are exported.
+- **Signatures.** `DraftInput.signature` adds the default send-as's signature (else the
+  primary's) above any quote. `scrubSignatureHtml()` strips script and style (repeated until
+  stable), event handlers and `javascript:`/`vbscript:` URLs, and escapes any `<` that does not
+  open a well-formed tag; images are kept. `signatureBlock()` is exported.
+- `GmailClient.listSendAs()`, `GmailClient.listDrafts({ max, q })` (read-only),
+  `GmailClient.getDraft()`; `SendAs` and `DraftSummary` types.
+- `GmailWriter.buildDraft()` builds the message `createDraft` would post and reports what went
+  into it, writing nothing; `postDraft()` writes it.
+- **Forward.** `GuardedWriter.forwardDraft({ messageId, to, … })` and
+  `GmailWriter.buildForward()`: `Fwd:` subject, Gmail's forwarded-message block, the original's
+  thread and threading headers (as Gmail's own Forward writes them), and its files
+  (`attachments: "all" | "none" | names`; an unknown name throws before any download). Inline
+  images are reported in `skippedInline`. `forwardBlock`, `forwardSubject` and
+  `FORWARD_MARKER` are exported.
+- **Edit.** `GuardedWriter.updateDraft({ draftId, … })` and `GmailWriter.buildUpdate()` /
+  `putDraft()`: anything not given is kept (recipients, subject, threading, the body parts,
+  every file byte for byte, with sha256 in the result). A new body regenerates the quote from the
+  original in the thread; old quote text is never parsed back. `expectMessageId`, plus a re-read
+  just before the write, refuse a draft edited elsewhere.
+- **Carrying files.** `carryAttachments(client, message, { select, addedBytes, limit })` returns a
+  message's regular files as bytes with sha256; the declared sizes are checked before anything
+  is downloaded. `fileRefs()` and `existingBody()` are exported.
+- New errors: `AttachmentLimitError { totalBytes, limit }`, `DraftNotEditableError { draftId,
+  reason: "inline_parts" | "download_failed" }`, `DraftChangedError { draftId, expected, actual }`.
+- Guard results: `createDraft` returns `recipients`, `quoted` and `signature`; forward and update
+  return their own summaries. The write log adds recipient counts, file counts and sha256, never
+  addresses or filenames (`draft.forward` and `draft.update` ops).
+- CLI: `draft create` gains `--html-file`, `--bcc`, `--reply-all`, `--signature`, `--no-quote`
+  and prints To, Cc and Bcc; new `draft forward`, `draft update` and `drafts`.
+
+### Changed
+
+- `createDraft` on a reply now quotes the original by default (pass `quote: false` for the old
+  output) and reads it in `full` format when quoting.
+- A plain reply splits the original's Reply-To/From into one recipient per address.
+- `MAX_ATTACHMENT_BYTES` moved to `lib/carry.ts` (still exported from the root). The size refusal
+  in `createDraft` is now an `AttachmentLimitError` (an `Error`, same message wording).
+
 ## [0.7.0] - 2026-11-15
 
 ### Added

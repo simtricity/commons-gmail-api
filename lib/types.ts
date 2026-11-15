@@ -179,6 +179,22 @@ export interface Profile {
   historyId: string;
 }
 
+/** A send-as address, from `users.settings.sendAs.list`: the primary address and any aliases. */
+export interface SendAs {
+  /** The address mail is sent from. */
+  sendAsEmail: string;
+  /** The display name used with it. */
+  displayName?: string;
+  /** Reply-To set for this address, if any. */
+  replyToAddress?: string;
+  /** The signature, as HTML, from the account holder's Gmail settings. */
+  signature?: string;
+  /** True for the account's own address. */
+  isPrimary?: boolean;
+  /** True for the address new mail is sent from by default. */
+  isDefault?: boolean;
+}
+
 /** A Gmail label as returned by `users.labels.get`/`list`. */
 export interface Label {
   /** Label id, e.g. `INBOX` or `Label_12`. */
@@ -282,7 +298,7 @@ export interface LabelChange {
   allowSystem?: boolean;
 }
 
-/** Input for a new draft. Plain text only in this release. */
+/** Input for a new draft: text, optionally HTML, files, and a reply's thread and quote. */
 export interface DraftInput {
   /** Recipients. Optional when replying: defaults to the original's Reply-To or From. */
   to?: string[];
@@ -292,12 +308,149 @@ export interface DraftInput {
   bcc?: string[];
   /** Subject. When replying, defaults to `Re: <original subject>`. */
   subject?: string;
-  /** Plain-text body, UTF-8. */
+  /** Plain-text body, UTF-8. Always sent; with an HTML body it is the plain alternative. */
   text: string;
+  /**
+   * The body as HTML, sent as given (it is the caller's own; nothing is sanitised). Absent: when
+   * an HTML part is needed (a quote, a signature), it is the escaped text.
+   */
+  html?: string;
   /** Reply in the thread of this message: sets threadId, In-Reply-To and References. */
   replyToMessageId?: string;
+  /**
+   * Quote the original under the reply, as Gmail does. Default true when replying; ignored
+   * otherwise. The quote is the original's text, escaped: never its HTML.
+   */
+  quote?: boolean;
+  /**
+   * Reply to everyone on the original, as Gmail does: needs `replyToMessageId`. Your own
+   * addresses (the profile and every send-as) are left out, Bcc is never computed, a given `to`
+   * replaces the computed one and a given `cc` is added to it.
+   */
+  replyAll?: boolean;
+  /**
+   * Add the send-as signature of the draft's From address (the default send-as, else the
+   * primary), after the new body and above any quote, as Gmail places it. Its HTML is scrubbed
+   * of scripts, styles, event handlers and `javascript:` URLs; images are kept.
+   */
+  signature?: boolean;
   /** Files to attach, as bytes. The library never reads paths; callers load the files. */
   attachments?: DraftAttachment[];
+}
+
+/** A draft built but not yet written: the message, and what went into it. */
+export interface DraftPlan {
+  /** The `message` resource to post: the raw RFC 5322 bytes, and the thread when replying. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** True when the original was quoted under the reply. */
+  quoted: boolean;
+  /** `added`; `none` when asked for but no signature is set; `off` when not asked for. */
+  signature: "added" | "none" | "off";
+}
+
+/** Input for a forward draft. */
+export interface ForwardInput {
+  /** The message to forward. */
+  messageId: string;
+  /** Recipients: required. Nothing is computed from the original. */
+  to: string[];
+  /** Cc recipients. */
+  cc?: string[];
+  /** Bcc recipients. */
+  bcc?: string[];
+  /** Your note above the forwarded message. May be empty. */
+  text?: string;
+  /** Your note as HTML, sent as given. */
+  html?: string;
+  /**
+   * The original's files to carry: `all` (default), `none`, or exact filenames. A name that
+   * matches no regular file throws before any download. Inline images are never carried; they
+   * are reported in `skippedInline`.
+   */
+  attachments?: "all" | "none" | string[];
+  /** Add the send-as signature, as for {@link DraftInput.signature}. */
+  signature?: boolean;
+}
+
+/** What a forward carried from the original. */
+export interface CarriedSummary {
+  /** Files carried. */
+  count: number;
+  /** Their total bytes. */
+  totalBytes: number;
+  /** sha256 (hex) of each, in order. */
+  sha256: string[];
+}
+
+/** A forward built but not yet written. */
+export interface ForwardPlan {
+  /** The `message` resource to post. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** The files carried from the original. */
+  carried: CarriedSummary;
+  /** Inline parts of the original that were not carried (signature logos, pasted images). */
+  skippedInline: number;
+  /** As for {@link DraftPlan.signature}. */
+  signature: "added" | "none" | "off";
+}
+
+/** Input for editing a draft. Anything not given is kept. */
+export interface UpdateDraftInput {
+  /** The draft to edit (its draft id, not its message id). */
+  draftId: string;
+  /** New text: replaces your text above any quote. With neither text nor html, the body is kept. */
+  text?: string;
+  /** New HTML body, sent as given. */
+  html?: string;
+  /** New subject. */
+  subject?: string;
+  /** New To, replacing the old one whole. */
+  to?: string[];
+  /** New Cc, replacing the old one whole. */
+  cc?: string[];
+  /** New Bcc, replacing the old one whole. */
+  bcc?: string[];
+  /** Files to add. */
+  addAttachments?: DraftAttachment[];
+  /** Files to remove, by exact filename; an unknown name throws before any write. */
+  removeAttachments?: string[];
+  /**
+   * When the body is rebuilt and the draft is a reply: regenerate the quote from the original
+   * (default true). Old quote text is never parsed back out of the draft.
+   */
+  quote?: boolean;
+  /** When the body is rebuilt: add the signature. Default: whether the draft had one. */
+  signature?: boolean;
+  /** Refuse with `DraftChangedError` unless the draft's message id is still this. */
+  expectMessageId?: string;
+}
+
+/** An edit built but not yet written. */
+export interface UpdatePlan {
+  /** The draft being edited. */
+  draftId: string;
+  /** Its message id when read; checked again just before the write. */
+  previousMessageId: string;
+  /** The `message` resource to put. */
+  message: { raw: string; threadId?: string };
+  /** The recipients exactly as written into the message. */
+  recipients: { to: string[]; cc: string[]; bcc: string[] };
+  /** `kept`: the old text and HTML parts as they were; `rebuilt`: through the composer. */
+  body: "kept" | "rebuilt";
+  /** Files kept from the draft, with their sha256 (equal before and after). */
+  kept: { count: number; sha256: string[] };
+  /** Files added. */
+  added: number;
+  /** Files removed. */
+  removed: number;
+  /** True when the draft's body holds a quote of the original. */
+  quoted: boolean;
+  /** `added` or `none` when a rebuild asked for one; `off` otherwise; `added` when a kept body has one. */
+  signature: "added" | "none" | "off";
 }
 
 /** A file attached to a draft. */
@@ -316,4 +469,20 @@ export interface Draft {
   id: string;
   /** The draft's message (id, threadId, labelIds). */
   message: { id: string; threadId?: string; labelIds?: string[] };
+}
+
+/** One draft in a listing: its ids and the headers that tell drafts apart. */
+export interface DraftSummary {
+  /** Draft id (what update and delete take). */
+  id: string;
+  /** The draft's current message id; it changes on every update. */
+  messageId: string;
+  /** The thread the draft is in. */
+  threadId?: string;
+  /** `Subject`, as written. */
+  subject: string;
+  /** `To`, as written. */
+  to: string;
+  /** `Date`, as written. */
+  date: string;
 }

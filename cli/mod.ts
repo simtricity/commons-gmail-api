@@ -32,8 +32,21 @@
  *   label apply  <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply; max 25 ids
  *   label remove <name> --ids a,b,c [--threads] [--apply]   System labels refused
  *   draft create --to a@b --subject S --body TEXT | --reply-to <messageId> --body TEXT
- *                [--body-file <path>] [--attach <path>]...   (attachments total ≤ 25 MB)
+ *                [--body-file <path>] [--html-file <path>] [--cc a@b]... [--bcc a@b]...
+ *                [--attach <path>]...   (attachments total ≤ 25 MB)
+ *                Replies quote the original (--no-quote to leave it out); --reply-all adds
+ *                everyone on the original but you; --signature adds your send-as signature.
  *                Creates a draft only. Applied writes append to ~/.simt/gmail-api/writes.log
+ *   draft forward --message <id> --to a@b [--cc a@b]... [--bcc a@b]... [--body TEXT]
+ *                [--body-file <path>] [--html-file <path>] [--files all|none|a.pdf,b.xlsx]
+ *                [--signature]   Forwards as Gmail does (Fwd:, the original's thread and
+ *                files); inline images are reported, not carried. Creates a draft only.
+ *   draft update --draft <draftId> [--body TEXT | --body-file <path>] [--html-file <path>]
+ *                [--subject S] [--to a@b]... [--cc a@b]... [--bcc a@b]... [--attach <path>]...
+ *                [--remove a.pdf,b.xlsx] [--no-quote] [--signature] [--expect-message <msgId>]
+ *                Anything not given is kept: recipients, subject, thread, body, files. Refuses
+ *                drafts with inline images and drafts edited elsewhere since they were read.
+ *   drafts       [--max N] [-q <query>]          List drafts: id, subject, To, date
  *
  *   organise <verb> ...                           Sort a mailbox into labels with a decision
  *                model; labels only. `organise --help` lists the verbs and exit codes.
@@ -76,9 +89,29 @@ const args = parseArgs(Deno.args, {
     "body-file",
     "recipient",
     "days",
+    "html-file",
+    "files",
+    "draft",
+    "remove",
+    "expect-message",
   ],
-  collect: ["include", "filename", "to", "cc", "attach"],
-  boolean: ["help", "json", "inline", "dry-run", "write", "apply", "threads", "headers", "links"],
+  collect: ["include", "filename", "to", "cc", "bcc", "attach"],
+  boolean: [
+    "help",
+    "json",
+    "inline",
+    "dry-run",
+    "write",
+    "apply",
+    "threads",
+    "headers",
+    "links",
+    "quote",
+    "reply-all",
+    "signature",
+  ],
+  negatable: ["quote"],
+  default: { quote: true },
   alias: { h: "help" },
 });
 
@@ -101,7 +134,16 @@ Commands:
   label create <name>                           Create label (parents too); idempotent   [write]
   label apply|remove <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply   [write]
   draft create --to <a> --subject <s> --body <t> | --reply-to <msgId> --body <t>        [write]
-               [--body-file <path>] (instead of --body) [--attach <path>]... (total ≤ 25 MB)
+               [--body-file <path>] (instead of --body) [--html-file <path>] (HTML body)
+               [--cc <a>]... [--bcc <a>]... [--attach <path>]... (total ≤ 25 MB)
+               replies: quoted by default [--no-quote]; [--reply-all] everyone but you
+               [--signature] your send-as signature, above the quote
+  draft forward --message <id> --to <a> [--cc <a>]... [--bcc <a>]... [--body <t>]       [write]
+               [--files all|none|<name>,<name>] (default all) [--signature]
+  draft update --draft <id> [--body <t>] [--subject <s>] [--to|--cc|--bcc <a>]...     [write]
+               [--attach <path>]... [--remove <name>,<name>] [--no-quote] [--signature]
+               [--expect-message <msgId>]   anything not given is kept
+  drafts       [--max N] [-q <query>]          List drafts (newest first; default 20)
   logout       [--account <email>]              Revoke at Google and forget
   whoami       [--write]                        Runtime, store, grant, mailbox
   accounts     [--default <email>]              List mailboxes / set default
@@ -226,18 +268,79 @@ try {
       break;
     }
     case "draft":
-      if (sub !== "create") throw new Error("draft needs a subcommand: create");
+      if (sub === "forward") {
+        if (!args.message) throw new Error("draft forward needs --message <id>");
+        if (!(args.to as string[] | undefined)?.length) throw new Error("draft forward needs --to");
+        if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
+        const files = args.files === undefined || args.files === "all"
+          ? "all" as const
+          : args.files === "none"
+          ? "none" as const
+          : String(args.files).split(",").map((x) => x.trim()).filter(Boolean);
+        await commands.draftForward(ctx, {
+          message: args.message,
+          to: (args.to as string[]).map(String),
+          cc: (args.cc as string[] | undefined)?.map(String),
+          bcc: (args.bcc as string[] | undefined)?.map(String),
+          text: args.body ??
+            (args["body-file"] ? await Deno.readTextFile(args["body-file"]) : undefined),
+          html: args["html-file"] ? await Deno.readTextFile(args["html-file"]) : undefined,
+          files,
+          signature: args.signature,
+        });
+        break;
+      }
+      if (sub === "update") {
+        if (!args.draft) throw new Error("draft update needs --draft <draftId>");
+        if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
+        const list = (k: "to" | "cc" | "bcc") => (args[k] as string[] | undefined)?.map(String);
+        await commands.draftUpdate(ctx, {
+          draftId: args.draft,
+          to: list("to"),
+          cc: list("cc"),
+          bcc: list("bcc"),
+          subject: args.subject,
+          text: args.body ??
+            (args["body-file"] ? await Deno.readTextFile(args["body-file"]) : undefined),
+          html: args["html-file"] ? await Deno.readTextFile(args["html-file"]) : undefined,
+          attach: (args.attach as string[] | undefined)?.map(String),
+          remove: args.remove
+            ? String(args.remove).split(",").map((x) => x.trim()).filter(Boolean)
+            : undefined,
+          // --no-quote only matters when the body is rebuilt
+          quote: args.quote,
+          // absent means "as the draft had it", which a boolean flag's false cannot say
+          signature: Deno.args.includes("--signature") ? true : undefined,
+          expectMessageId: args["expect-message"],
+        });
+        break;
+      }
+      if (sub !== "create") throw new Error("draft needs a subcommand: create | forward | update");
       if (!args.body && !args["body-file"]) {
         throw new Error("draft create needs --body <text> or --body-file <path>");
       }
       if (args.body && args["body-file"]) throw new Error("give --body or --body-file, not both");
+      if (args["reply-all"] && !args["reply-to"]) {
+        throw new Error("--reply-all needs --reply-to <messageId>");
+      }
       await commands.draftCreate(ctx, {
         to: (args.to as string[] | undefined)?.map(String),
         cc: (args.cc as string[] | undefined)?.map(String),
+        bcc: (args.bcc as string[] | undefined)?.map(String),
         subject: args.subject,
         text: args.body ?? await Deno.readTextFile(args["body-file"]!),
+        html: args["html-file"] ? await Deno.readTextFile(args["html-file"]) : undefined,
         replyTo: args["reply-to"],
+        replyAll: args["reply-all"],
+        quote: args.quote,
+        signature: args.signature,
         attach: (args.attach as string[] | undefined)?.map(String),
+      });
+      break;
+    case "drafts":
+      await commands.drafts(ctx, {
+        max: args.max ? Number(args.max) : undefined,
+        q: args.q,
       });
       break;
     default:
