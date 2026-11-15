@@ -25,6 +25,53 @@ export interface OAuthCredential {
   scope: string;
   /** ISO 8601 UTC of the login that minted the refresh token. */
   savedAt: string;
+  /** ISO 8601 UTC of the last successful access-token refresh. Absent until the first one. */
+  lastRefreshAt?: string;
+  /** The last refresh failure, cleared by the next success. Absent when the last refresh worked. */
+  lastRefreshError?: RefreshFailure;
+}
+
+/** A failed access-token refresh, as recorded on the credential and reported to `onAuthEvent`. */
+export interface RefreshFailure {
+  /** ISO 8601 UTC. */
+  at: string;
+  /** HTTP status from Google; absent when it could not be reached. */
+  status?: number;
+  /** Google's OAuth `error` code, e.g. `invalid_grant`. */
+  code?: string;
+  /** True when Google refused the sign-in (a new login is needed); false when it may pass. */
+  rejected: boolean;
+}
+
+/**
+ * A sign-in event, for a caller's own log. `GmailClient` emits the `refresh-*` events; `login`
+ * and `logout` are for callers that perform those. Never carries a token or secret.
+ */
+export interface AuthEvent {
+  /** ISO 8601 UTC. */
+  at: string;
+  /**
+   * `refresh-retry`: a refresh attempt failed and will be retried. `refresh-recovered`: a refresh
+   * succeeded after retries. `refresh-failed`: retries ran out on a failure that may pass.
+   * `refresh-rejected`: Google refused the sign-in.
+   */
+  event:
+    | "refresh-retry"
+    | "refresh-recovered"
+    | "refresh-failed"
+    | "refresh-rejected"
+    | "login"
+    | "logout";
+  /** The mailbox. */
+  account: string;
+  /** Attempt number, for refresh events. */
+  attempt?: number;
+  /** HTTP status from Google, when there was one. */
+  status?: number;
+  /** Google's OAuth `error` code, when it sent one. */
+  code?: string;
+  /** Scopes granted, for `login`. */
+  scopes?: string[];
 }
 
 /**

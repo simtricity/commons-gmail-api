@@ -7,10 +7,11 @@
  */
 
 import { isAccessTokenStale, refreshAccessToken, revokeToken } from "./auth.ts";
-import { GmailApiError, NotSignedInError, OAuthError } from "./errors.ts";
+import { GmailApiError, NotSignedInError, OAuthError, TokenEndpointError } from "./errors.ts";
 import { decodeBase64Url, header, listAttachments } from "./mime.ts";
 import type {
   AttachmentRef,
+  AuthEvent,
   ClientSecret,
   DraftSummary,
   Label,
@@ -19,6 +20,7 @@ import type {
   MessageListResponse,
   OAuthCredential,
   Profile,
+  RefreshFailure,
   SendAs,
   Thread,
   TokenStore,
@@ -36,8 +38,15 @@ export interface GmailClientOptions {
   account?: string;
   /** Diagnostics (token refreshes etc). Default: silent. */
   log?: (line: string) => void;
-  /** Transport override for tests. Default: global `fetch`. */
+  /** Transport override for tests. Default: global `fetch`. Also used for token refreshes. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Sign-in events (refresh retries, recoveries, failures, rejections) for the caller's own log.
+   * Never carries a token. Default: none.
+   */
+  onAuthEvent?: (event: AuthEvent) => void;
+  /** First wait between token-refresh attempts in ms, doubling. Default 1000. */
+  refreshRetryBaseMs?: number;
 }
 
 /** Read-only Gmail REST client. Refreshes access tokens on demand and retries once on 401. */
@@ -85,26 +94,78 @@ export class GmailClient {
     return loaded;
   }
 
-  /** Return a fresh access token, refreshing via the OAuth client when stale or when `force` is set. */
+  /**
+   * Return a fresh access token, refreshing via the OAuth client when stale or when `force` is
+   * set. A failed refresh never deletes the stored credential: it is recorded on the credential
+   * (`lastRefreshError`) and reported to `onAuthEvent`, and a new login replaces it.
+   *
+   * Throws `NotSignedInError` (with the `OAuthError` as `cause`) when Google refuses the sign-in,
+   * and `TokenEndpointError` when the refresh failed in a way that can pass.
+   */
   private async accessToken(force = false): Promise<string> {
     let cred = await this.credential();
     if (force || isAccessTokenStale(cred)) {
       this.log(`refreshing access token for ${cred.email}`);
+      const account = cred.email;
+      let retried = 0;
       try {
-        cred = await refreshAccessToken(this.opts.clientSecret, cred);
+        cred = await refreshAccessToken(this.opts.clientSecret, cred, {
+          fetch: this.fetchImpl,
+          ...(this.opts.refreshRetryBaseMs !== undefined
+            ? { retryBaseMs: this.opts.refreshRetryBaseMs }
+            : {}),
+          onRetry: (f) => {
+            retried = f.attempt;
+            this.emit({ event: "refresh-retry", account, ...f });
+          },
+        });
       } catch (e) {
-        if (e instanceof OAuthError) {
-          // Rejected upstream (revoked, secret rotated): the stored value is worthless.
-          await this.opts.store.delete(cred.email);
-          this.cred = null;
-          throw new NotSignedInError(`${e.message} Run login.`);
+        if (e instanceof OAuthError || e instanceof TokenEndpointError) {
+          const failure: RefreshFailure = {
+            at: new Date().toISOString(),
+            ...(e.status !== undefined ? { status: e.status } : {}),
+            ...(e.code !== undefined ? { code: e.code } : {}),
+            rejected: e instanceof OAuthError,
+          };
+          await this.remember({ ...cred, lastRefreshError: failure });
+          const { at: _at, rejected, ...detail } = failure;
+          this.emit({
+            event: rejected ? "refresh-rejected" : "refresh-failed",
+            account,
+            ...detail,
+          });
+          if (e instanceof OAuthError) {
+            this.cred = null;
+            throw new NotSignedInError(`${e.message} Run login.`, { cause: e });
+          }
         }
         throw e;
       }
+      if (retried) this.emit({ event: "refresh-recovered", account, attempt: retried + 1 });
+      const { lastRefreshError: _cleared, ...ok } = cred;
+      cred = { ...ok, lastRefreshAt: new Date().toISOString() };
       this.cred = cred;
       await this.opts.store.save(cred);
     }
     return cred.accessToken;
+  }
+
+  /** Record a refresh failure on the stored credential, without letting the save mask the error. */
+  private async remember(cred: OAuthCredential): Promise<void> {
+    try {
+      await this.opts.store.save(cred);
+    } catch {
+      // fallback: a store that cannot be written still gets the original refresh error thrown.
+    }
+  }
+
+  /** Report a sign-in event, stamped now; a throwing listener never breaks the request. */
+  private emit(e: Omit<AuthEvent, "at">): void {
+    try {
+      this.opts.onAuthEvent?.({ at: new Date().toISOString(), ...e });
+    } catch {
+      // fallback: logging is best effort; the request carries on.
+    }
   }
 
   /**
