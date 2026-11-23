@@ -3,7 +3,7 @@
  *
  * Separate from `GmailClient` on purpose: importing the read client can never mutate a mailbox,
  * and this module can be left out of a read-only vendored copy. Needs a credential granted with
- * `SCOPES_WRITE` (`login --write`); every method checks the granted scope locally and throws
+ * `SCOPES_ALL` (the CLI's `login`); every method checks the granted scope locally and throws
  * `InsufficientScopeError` before any network call.
  *
  * Not here, deliberately: send, trash, permanent delete, filters, settings.

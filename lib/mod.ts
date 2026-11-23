@@ -5,6 +5,8 @@ export * from "./compose.ts";
 export * from "./recipients.ts";
 export * from "./store.ts";
 export * from "./auth.ts";
+export * from "./authlog.ts";
+export * from "./migrate.ts";
 export * from "./client.ts";
 export * from "./attachments.ts";
 export * from "./carry.ts";

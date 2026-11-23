@@ -4,6 +4,7 @@
  */
 import { assert, assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
 import {
+  appendAuthLog,
   type AuthEvent,
   GmailClient,
   MemoryTokenStore,
@@ -13,7 +14,7 @@ import {
   refreshAccessToken,
   TokenEndpointError,
 } from "../mod.ts";
-import { appendAuthLog, errorText } from "../cli/commands.ts";
+import { errorText, recordAuthEvent } from "../cli/commands.ts";
 
 const TOKEN = "https://oauth2.googleapis.com/token";
 const SECRET = { clientId: "id", clientSecret: "s" };
@@ -157,7 +158,7 @@ Deno.test("refreshAccessToken: attempts and onRetry are honoured", async () => {
   assertEquals([n, seen], [2, [1]]);
 });
 
-Deno.test("cli errorText: the write grant's command, and the auth log for refresh failures", () => {
+Deno.test("cli errorText: refresh failures point at the auth log; others pass through", () => {
   const log = "/tmp/auth.log";
   const refused = new NotSignedInError(
     "Google rejected the saved sign-in (invalid_grant). Run login.",
@@ -166,49 +167,89 @@ Deno.test("cli errorText: the write grant's command, and the auth log for refres
     },
   );
   assertEquals(
-    errorText({ write: true, authLogPath: log }, refused),
-    "Google rejected the saved sign-in (invalid_grant). Run login --write. Details: /tmp/auth.log",
-  );
-  assertEquals(
-    errorText({ write: false, authLogPath: log }, refused),
+    errorText({ authLogPath: log }, refused),
     "Google rejected the saved sign-in (invalid_grant). Run login. Details: /tmp/auth.log",
   );
   assertEquals(
     errorText(
-      { write: false, authLogPath: log },
+      { authLogPath: log },
       new TokenEndpointError("Google's token endpoint answered 503.", { status: 503 }),
     ),
     "Google's token endpoint answered 503. Details: /tmp/auth.log",
   );
   assertEquals(
-    errorText({ write: true, authLogPath: log }, new NotSignedInError("Not signed in. Run login.")),
-    "Not signed in. Run login --write.",
+    errorText({ authLogPath: log }, new NotSignedInError("Not signed in. Run login.")),
+    "Not signed in. Run login.",
+    "one sign-in: never login --write",
   );
-  assertEquals(errorText({ write: false, authLogPath: log }, new Error("other")), "other");
+  assertEquals(errorText({ authLogPath: log }, new Error("other")), "other");
 });
 
-Deno.test("cli appendAuthLog: one JSON line per event, 0600, tagged with the grant, never a token", async () => {
+Deno.test("cli recordAuthEvent: one JSON line per event, 0600, tagged with scope names, never a token", async () => {
   const dir = await Deno.makeTempDir({ prefix: "gmail-auth-log-" });
   const path = `${dir}/sub/auth.log`;
-  appendAuthLog({ write: true, authLogPath: path }, {
+  const credentialsPath = `${dir}/credentials.json`;
+  await Deno.writeTextFile(
+    credentialsPath,
+    JSON.stringify({
+      version: 1,
+      default: "owner@home.test",
+      accounts: {
+        "owner@home.test": {
+          email: "owner@home.test",
+          refreshToken: "r",
+          scope:
+            "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify",
+          savedAt: "2026-11-23T00:00:00.000Z",
+        },
+      },
+    }),
+  );
+  recordAuthEvent({ credentialsPath, authLogPath: path }, {
     at: "2026-11-08T00:00:00.000Z",
     event: "refresh-rejected",
     account: "owner@home.test",
     status: 400,
     code: "invalid_grant",
   });
-  appendAuthLog({ write: false, authLogPath: path }, {
+  recordAuthEvent({ credentialsPath, authLogPath: path }, {
     at: "2026-11-08T00:00:01.000Z",
     event: "login",
     account: "owner@home.test",
-    scopes: ["s"],
+    scopes: [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.compose",
+    ],
   });
-  const lines = (await Deno.readTextFile(path)).trim().split("\n").map((l) => JSON.parse(l));
-  assertEquals(lines.map((l) => [l.event, l.grant]), [["refresh-rejected", "write"], [
-    "login",
-    "readonly",
-  ]]);
+  const text = await Deno.readTextFile(path);
+  const lines = text.trim().split("\n").map((l) => JSON.parse(l));
+  assertEquals(lines.map((l) => [l.event, l.grant]), [
+    ["refresh-rejected", ["readonly", "modify"]],
+    ["login", ["readonly", "modify", "compose"]],
+  ]);
+  assert(!text.includes('"r"'), "never a token");
   assertEquals(((await Deno.stat(path)).mode ?? 0) & 0o777, 0o600);
-  appendAuthLog({ write: false, authLogPath: "/dev/null/nope/auth.log" }, lines[0]); // never throws
+  recordAuthEvent({ credentialsPath: "/nope", authLogPath: "/dev/null/nope/auth.log" }, lines[0]); // never throws
   await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("lib appendAuthLog: one JSON line with extra fields, file 0600, dir 0700, never throws", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "gmail-lib-auth-log-" });
+  try {
+    const path = `${dir}/deep/er/auth.log`;
+    const ev = { at: "2026-11-23T00:00:00.000Z", event: "login" as const, account: "o@home.test" };
+    appendAuthLog(path, ev, { grant: ["readonly"], via: "test" });
+    appendAuthLog(path, { ...ev, event: "logout" as const });
+    const lines = (await Deno.readTextFile(path)).trim().split("\n").map((l) => JSON.parse(l));
+    assertEquals(lines, [
+      { ...ev, grant: ["readonly"], via: "test" },
+      { ...ev, event: "logout" },
+    ]);
+    assertEquals(((await Deno.stat(path)).mode ?? 0) & 0o777, 0o600);
+    assertEquals(((await Deno.stat(`${dir}/deep/er`)).mode ?? 0) & 0o777, 0o700);
+    appendAuthLog("/dev/null/nope/auth.log", ev); // never throws
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

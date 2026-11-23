@@ -24,6 +24,8 @@ import {
   InsufficientScopeError,
   NotSignedInError,
   OAuthError,
+  SCOPE_COMPOSE,
+  SCOPE_MODIFY,
 } from "../lib/mod.ts";
 import {
   type Judge,
@@ -180,7 +182,7 @@ Usage: deno task cli organise <verb> [options] [--json]
   judge     --run R [--scheme a,b] [--force] [--concurrency N]
   decide    --run R [--scheme a,b] [--now ISO] [--show-moves]
   score     --run R --scheme S
-  apply     --run R --scheme S [--apply]          dry run unless --apply (needs login --write)
+  apply     --run R --scheme S [--apply]          dry run unless --apply (needs the modify scope)
   reconcile --run R --scheme S
   explain   --run R --message ID --scheme S
   find      --run R --find TEXT
@@ -515,16 +517,15 @@ function typesafeKey(home: string): string {
 /** {@link OrganiseDeps} from the environment: the only place organise reads it. */
 export function envDeps(o: { account?: string }): OrganiseDeps {
   const home = Deno.env.get("HOME") ?? ".";
-  const readCtx = contextFromEnv({ account: o.account, json: true, write: false });
-  const writeCtx = contextFromEnv({ account: o.account, json: true, write: true });
+  const ctx = contextFromEnv({ account: o.account, json: true });
   const say = (l: string) => console.error(`  ${l}`);
   return {
     dataDir: Deno.env.get("GMAIL_ORGANISE_DATA") ?? `${home}/.simt/gmail-api/organise`,
-    gmail: () => client(readCtx),
+    gmail: () => client(ctx),
     writer: async () =>
-      new GuardedWriter(new GmailWriter(await client(writeCtx), { log: say }), {
+      new GuardedWriter(new GmailWriter(await client(ctx), { log: say }), {
         log: {
-          path: writeCtx.credentialsPath.replace(/[^/]+$/, "writes.log"),
+          path: ctx.credentialsPath.replace(/[^/]+$/, "writes.log"),
           via: "gmail-api-organise",
         },
       }),
@@ -536,18 +537,14 @@ export function envDeps(o: { account?: string }): OrganiseDeps {
         endpoint: Deno.env.get("TYPESAFE_ENDPOINT") || undefined,
       }),
     grants: async () => {
-      const gmail = await client(readCtx);
+      // One sign-in since 0.9.0: it is the write grant too when it holds modify and compose.
+      const gmail = await client(ctx);
       const read = {
         email: (await gmail.profile()).emailAddress,
         scopes: await gmail.grantedScopes(),
       };
-      if (!(await writeCtx.store.load(o.account))) return { read };
-      try {
-        const w = await client(writeCtx);
-        return { read, write: { email: await w.email(), scopes: await w.grantedScopes() } };
-      } catch (e) {
-        return { read, write: { error: messageOf(e) } };
-      }
+      const canWrite = [SCOPE_MODIFY, SCOPE_COMPOSE].every((s) => read.scopes.includes(s));
+      return canWrite ? { read, write: read } : { read };
     },
     out: (t) => console.log(t),
     err: (t) => console.error(t),

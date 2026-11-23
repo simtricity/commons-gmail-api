@@ -33,6 +33,18 @@ Observed while building and testing this client. Vendor behaviour, not ours.
 - The token endpoint also answers 429 and 5xx, briefly. Those are not refusals: retry, and keep
   the credential. Treating every non-2xx as revoked turns a passing blip into a forced login.
 
+- **A revoke cancels the whole grant** (checked 2026-11-23 against Google's native-app OAuth
+  guide, "Revoking a token"): "Revocation removes all OAuth 2.0 scopes previously granted to a
+  project, invalidating any issued access or refresh tokens for all clients registered under that
+  project." Revoking one refresh token therefore ends every stored sign-in the user gave the Cloud
+  project, in every tool and on every machine. That is why `logout` asks first. Google also
+  caps refresh tokens at 100 per Google Account per OAuth client; a new one past the cap silently
+  invalidates the oldest.
+- An **Internal** app (Workspace) has no refresh-token lifetime: a sign-in ends only by a revoke,
+  a password reset, the admin, or the 100-token cap. A sudden loss of every sign-in at once is a
+  revoke. Workspace admins see each authorisation and revoke in the Admin console under
+  Reporting → Audit and investigation → OAuth log events.
+
 ## Messages / threads
 
 - `messages.get?format=full` returns the MIME tree with `body.attachmentId` for parts above a small

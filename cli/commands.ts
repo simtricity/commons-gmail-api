@@ -4,6 +4,7 @@
  */
 
 import {
+  appendAuthLog,
   type AuthEvent,
   type ClientSecret,
   DEFAULT_MAX_IDS,
@@ -16,13 +17,16 @@ import {
   GuardedWriter,
   loadClientSecretFile,
   loginInteractive,
+  migrateSplitCredentials,
+  type MigrationResult,
   NotSignedInError,
   OAuthError,
   parseGmailId,
   rawMessage,
   readMessages,
-  SCOPE_READONLY,
-  SCOPES_WRITE,
+  SCOPE_COMPOSE,
+  SCOPE_MODIFY,
+  SCOPES_ALL,
   searchThreads,
   sha256Hex,
   summarize,
@@ -30,15 +34,14 @@ import {
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
 import type { ReadMessage } from "../lib/body.ts";
-import { basename, dirname, join } from "@std/path";
+import { basename, join } from "@std/path";
 
 export interface Context {
   account?: string;
   json: boolean;
   clientSecretPath: string;
+  /** The one credential file: every command uses it (since 0.9.0). */
   credentialsPath: string;
-  /** True when --write selected the modify/compose credential file. */
-  write: boolean;
   loopbackPort: number;
   noBrowser: boolean;
   store: FileTokenStore;
@@ -46,23 +49,50 @@ export interface Context {
   authLogPath: string;
 }
 
+/**
+ * Run the one-time migration of the old write sign-in, before any credential is loaded. Prints
+ * one stderr line when it runs, and the deprecation when `GMAIL_API_CREDENTIALS_MODIFY` is set.
+ */
+export async function migrateFromEnv(): Promise<MigrationResult> {
+  const home = Deno.env.get("HOME") ?? ".";
+  const envModify = Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY");
+  if (envModify) console.error(MODIFY_ENV_DEPRECATED);
+  const r = await migrateSplitCredentials({
+    path: Deno.env.get("GMAIL_API_CREDENTIALS") ?? `${home}/.simt/gmail-api/credentials.json`,
+    legacyPath: envModify ?? `${home}/.simt/gmail-api/credentials.modify.json`,
+  });
+  if (r.warning) console.error(`gmail-api: ${r.warning}.`);
+  if (r.migrated) console.error(migrationNotice(r));
+  return r;
+}
+
+/** One stderr line describing a migration that ran. */
+export function migrationNotice(r: MigrationResult): string {
+  const what = r.accounts.length
+    ? `moved the write sign-in for ${r.accounts.join(", ")} into the one credential file`
+    : "found nothing to copy from the old write sign-in file";
+  return `gmail-api: ${what}; old file kept as ${r.renamedTo}` +
+    (r.backup ? `, backup ${r.backup}` : "") + ". Nothing was revoked.";
+}
+
+/** The deprecation line printed when `GMAIL_API_CREDENTIALS_MODIFY` is set. */
+export const MODIFY_ENV_DEPRECATED =
+  "GMAIL_API_CREDENTIALS_MODIFY is deprecated: it is read only to migrate the old write sign-in.";
+
 export function contextFromEnv(
-  input: { account?: string; json?: boolean; write?: boolean },
+  input: { account?: string; json?: boolean },
 ): Context {
   const home = Deno.env.get("HOME") ?? ".";
   const clientSecretPath = Deno.env.get("GMAIL_CLIENT_SECRET_PATH") ??
     `${home}/.simt/gmail-api/client-secret.json`;
-  // The write grant lives in its own file so read-only consumers never inherit it.
-  const credentialsPath = input.write
-    ? Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY") ??
-      `${home}/.simt/gmail-api/credentials.modify.json`
-    : Deno.env.get("GMAIL_API_CREDENTIALS") ?? `${home}/.simt/gmail-api/credentials.json`;
+  // One sign-in, one file (0.9.0). The old write file is migrated by `migrateFromEnv`.
+  const credentialsPath = Deno.env.get("GMAIL_API_CREDENTIALS") ??
+    `${home}/.simt/gmail-api/credentials.json`;
   return {
     account: input.account ?? Deno.env.get("GMAIL_ACCOUNT") ?? undefined,
     json: input.json ?? false,
     clientSecretPath,
     credentialsPath,
-    write: input.write ?? false,
     loopbackPort: Number(Deno.env.get("GMAIL_API_LOOPBACK_PORT") ?? "8731"),
     noBrowser: Deno.env.get("GMAIL_NO_BROWSER") === "1",
     store: new FileTokenStore({ path: credentialsPath }),
@@ -70,35 +100,52 @@ export function contextFromEnv(
   };
 }
 
-/**
- * Append one sign-in event to the auth log (0600), tagged with the grant. Synchronous, so the
- * line is on disk before an error exits the process. Never throws.
- */
-export function appendAuthLog(ctx: Pick<Context, "write" | "authLogPath">, e: AuthEvent): void {
+/** The printed form of `--write`, which 0.9.0 no longer needs. */
+export const WRITE_FLAG_IGNORED =
+  "--write is no longer needed: login grants read, labels and drafts in one sign-in.";
+
+/** The scopes the CLI's `login` asks for: every scope the package uses, in one consent. */
+export const LOGIN_SCOPES: readonly string[] = SCOPES_ALL;
+
+/** Scope short names (`readonly`, `modify`, `compose`). */
+export const scopeNames = (scope: string | string[]): string[] =>
+  (Array.isArray(scope) ? scope : scope.split(" ")).filter(Boolean).map((s) =>
+    s.split("/").at(-1)!.replace(/^gmail\./, "")
+  );
+
+/** The short scope names the stored sign-in for `account` holds; [] when unreadable. */
+function storedGrant(credentialsPath: string, account: string | undefined): string[] {
   try {
-    Deno.mkdirSync(dirname(ctx.authLogPath), { recursive: true, mode: 0o700 });
-    const line = JSON.stringify({ ...e, grant: ctx.write ? "write" : "readonly" }) + "\n";
-    Deno.writeTextFileSync(ctx.authLogPath, line, { append: true, mode: 0o600 });
+    const file = JSON.parse(Deno.readTextFileSync(credentialsPath)) as {
+      default?: string;
+      accounts?: Record<string, { scope?: string }>;
+    };
+    const key = account?.toLowerCase() ?? file.default ?? "";
+    return scopeNames(file.accounts?.[key]?.scope ?? "");
   } catch {
-    // fallback: an unwritable log never breaks a Gmail command; the error still reaches the user.
+    return []; // fallback: no readable credential file; the event is still logged
   }
 }
 
 /**
- * An error's message for this context: "Run login." names the right grant's command, and a
- * refused or failed refresh points at the auth log.
+ * Record one sign-in event in the context's auth log, tagged with the sign-in's scope short
+ * names (`grant`). The appending itself is the library's {@link appendAuthLog}; never throws.
  */
-export function errorText(ctx: Pick<Context, "write" | "authLogPath">, e: unknown): string {
-  let text = e instanceof Error ? e.message : String(e);
-  if (ctx.write) text = text.replace(/\bRun login\.$/, "Run login --write.");
+export function recordAuthEvent(
+  ctx: Pick<Context, "credentialsPath" | "authLogPath">,
+  e: AuthEvent,
+): void {
+  const grant = e.scopes ? scopeNames(e.scopes) : storedGrant(ctx.credentialsPath, e.account);
+  appendAuthLog(ctx.authLogPath, e, { grant });
+}
+
+/** An error's message for this context: a refused or failed refresh points at the auth log. */
+export function errorText(ctx: Pick<Context, "authLogPath">, e: unknown): string {
+  const text = e instanceof Error ? e.message : String(e);
   const refresh = e instanceof TokenEndpointError ||
     (e instanceof NotSignedInError && e.cause instanceof OAuthError);
   return refresh ? `${text} Details: ${ctx.authLogPath}` : text;
 }
-
-/** The command that replaces this context's grant. */
-export const loginCommand = (ctx: Pick<Context, "write">): string =>
-  ctx.write ? "login --write" : "login";
 
 function out(ctx: Context, data: unknown, human: () => void): void {
   if (ctx.json) console.log(JSON.stringify(data, null, 2));
@@ -116,20 +163,24 @@ export async function client(ctx: Context): Promise<GmailClient> {
     store: ctx.store,
     account: ctx.account,
     log: (l) => console.error(`  ${l}`),
-    onAuthEvent: (e) => appendAuthLog(ctx, e),
+    onAuthEvent: (e) => recordAuthEvent(ctx, e),
   });
 }
 
-export async function login(ctx: Context): Promise<void> {
-  const cred = await loginInteractive({
-    clientSecret: await secret(ctx),
-    scopes: ctx.write ? [...SCOPES_WRITE] : [SCOPE_READONLY],
+/** `login`: one browser consent for every scope the package uses, saved to the one file. */
+export async function login(
+  ctx: Context,
+  deps: { loginInteractive?: typeof loginInteractive; clientSecret?: ClientSecret } = {},
+): Promise<void> {
+  const cred = await (deps.loginInteractive ?? loginInteractive)({
+    clientSecret: deps.clientSecret ?? await secret(ctx),
+    scopes: [...LOGIN_SCOPES],
     port: ctx.loopbackPort,
     expectedEmail: ctx.account,
     openBrowser: ctx.noBrowser ? () => false : undefined,
   });
   await ctx.store.save(cred);
-  appendAuthLog(ctx, {
+  recordAuthEvent(ctx, {
     at: new Date().toISOString(),
     event: "login",
     account: cred.email,
@@ -149,11 +200,40 @@ export async function login(ctx: Context): Promise<void> {
   );
 }
 
-export async function logout(ctx: Context): Promise<void> {
+/**
+ * What `logout` prints instead of logging out when `--yes` is absent. One constant, so the skill
+ * and the tests use the same words; `<email>` is replaced with the account.
+ */
+export const LOGOUT_QUESTION =
+  `Are you sure? Logging out revokes this app's access at Google for <email>: every saved sign-in for it stops
+working, in every session and tool that uses it, and a new browser login is needed.
+If you are an agent, you must pass this "Are you sure?" to your user and wait for their answer.
+Re-run with --yes to log out.`;
+
+/** {@link LOGOUT_QUESTION} for one account. */
+export const logoutQuestion = (email: string): string => LOGOUT_QUESTION.replace("<email>", email);
+
+/**
+ * `logout`. Without `yes` it does nothing at all (no revoke, no file change, no network) and
+ * returns exit code 1 after printing {@link LOGOUT_QUESTION}: a revoke cancels the app's whole
+ * grant for the user, every saved sign-in with it. There is no interactive prompt, which would
+ * hang an agent's shell; the flag is the confirmation. With `yes`: revoke, forget, log.
+ */
+export async function logout(ctx: Context, opts: { yes?: boolean } = {}): Promise<number> {
+  if (!opts.yes) {
+    const saved = await ctx.store.load(ctx.account);
+    if (!saved) {
+      out(ctx, { signedIn: false }, () => console.log("Not signed in: nothing to log out."));
+      return 0;
+    }
+    const message = logoutQuestion(saved.email);
+    out(ctx, { confirmRequired: true, message, email: saved.email }, () => console.log(message));
+    return 1;
+  }
   const gmail = await client(ctx);
   const email = await gmail.email();
   const { revoked } = await gmail.logout();
-  appendAuthLog(ctx, { at: new Date().toISOString(), event: "logout", account: email });
+  recordAuthEvent(ctx, { at: new Date().toISOString(), event: "logout", account: email });
   out(ctx, { email, revoked }, () => {
     console.log(
       revoked
@@ -161,6 +241,7 @@ export async function logout(ctx: Context): Promise<void> {
         : `Forgot ${email}, but Google did not confirm the revoke — check https://myaccount.google.com/permissions`,
     );
   });
+  return 0;
 }
 
 /** Exits non-zero when live access fails — infra probes rely on the exit code. */
@@ -174,9 +255,11 @@ export async function whoami(ctx: Context): Promise<void> {
     accounts: await ctx.store.list(),
     defaultAccount: await ctx.store.defaultAccount(),
     requestedAccount: ctx.account ?? null,
-    grant: ctx.write ? "write" : "readonly",
     scopes: (await ctx.store.load(ctx.account))?.scope.split(" ").filter(Boolean) ?? [],
   };
+  const held = report.scopes as string[];
+  // One sign-in since 0.9.0: it can write when it holds the modify and compose scopes.
+  report.canWrite = [SCOPE_MODIFY, SCOPE_COMPOSE].every((s) => held.includes(s));
   let live: string | undefined;
   let ok = false;
   try {
@@ -203,9 +286,10 @@ export async function whoami(ctx: Context): Promise<void> {
   out(ctx, report, () => {
     console.log(`runtime        ${report.runtime} on ${report.os}`);
     console.log(
-      `grant          ${report.grant}: ${
-        (report.scopes as string[]).map((x) => x.split("/").at(-1)).join(", ") || "(none)"
-      }`,
+      `sign-in        ${scopeNames(held).join(", ") || "(none)"}; ` +
+        (report.canWrite
+          ? "can write labels and drafts"
+          : "read-only: run login to add labels and drafts"),
     );
     console.log(
       `client secret  ${ctx.clientSecretPath} ${report.clientSecretPresent ? "✓" : "✗ missing"}`,
@@ -225,9 +309,7 @@ export async function whoami(ctx: Context): Promise<void> {
       if (f) {
         console.log(
           `last failure   ${f.at} ${f.status ?? "no response"}${f.code ? ` ${f.code}` : ""} — ${
-            f.rejected
-              ? `Google refused the sign-in: run ${loginCommand(ctx)}`
-              : "may pass; retry later"
+            f.rejected ? "Google refused the sign-in: run login" : "may pass; retry later"
           }`,
         );
       }
@@ -343,17 +425,13 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-// ── Writes (labels, drafts) — need --write / credentials.modify.json ────────
+// ── Writes (labels, drafts): the sign-in must hold modify and compose ─────────
 
 /** Per-call ceiling for ids on the CLI. Bulk consumers use GmailWriter directly. */
 export const CLI_MAX_IDS = DEFAULT_MAX_IDS;
 
+/** The guarded writer. A read-only sign-in fails locally with `InsufficientScopeError`. */
 async function guarded(ctx: Context): Promise<GuardedWriter> {
-  if (!ctx.write) {
-    throw new Error(
-      "write commands need the write grant: run `login --write` (uses credentials.modify.json)",
-    );
-  }
   const writer = new GmailWriter(await client(ctx), { log: (l) => console.error(`  ${l}`) });
   return new GuardedWriter(writer, {
     maxIds: CLI_MAX_IDS,

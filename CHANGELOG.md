@@ -3,6 +3,42 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [0.9.0] - 2026-11-23
+
+### Changed
+
+- **One sign-in.** The CLI's `login` asks for every scope the package uses (`SCOPES_ALL`:
+  read-only, modify, compose) in one consent and saves it to `credentials.json`; every command
+  uses that file. `--write` is accepted and ignored, with one line on stderr. The library's own
+  `loginInteractive` default is still read-only.
+- **Automatic migration.** The first CLI command after the upgrade moves the write sign-in from
+  `credentials.modify.json` into `credentials.json` (backup `credentials.json.bak-<utc>` only when
+  it changes), renames the old file `….migrated-<utc>` and leaves `credentials.modify.MOVED.md`.
+  Every file 0600. It never revokes and makes no network call.
+- **`logout` asks first.** Without `--yes` it does nothing and exits 1, printing an "Are you
+  sure?" that tells an agent to pass the question to its user (`LOGOUT_QUESTION`); under `--json`,
+  `{ confirmRequired, message, email }`. A revoke cancels the app's whole grant for the user, every
+  saved sign-in with it. `logout --yes` behaves as before.
+- `whoami` shows the one sign-in's scopes and `canWrite`; the read/write `grant` field is gone.
+  The auth log's `grant` is now the scope short names, e.g. `["readonly","modify","compose"]`.
+- `InsufficientScopeError`'s remedy reads `Run login.`
+- The organise verbs use the same sign-in.
+
+### Added
+
+- `SCOPES_ALL`.
+- `migrateSplitCredentials({ path, legacyPath, now? })` in the library: the one-time move from
+  the two-file layout, paths passed in, no network, never a revoke; returns `{ migrated,
+  accounts, backup?, renamedTo?, tombstone?, warning? }`. The CLI's migration calls it, and
+  tools that vendor `lib/` can run the same code.
+- `appendAuthLog(path, event, extra?)` in the library: one JSON line per sign-in event, 0600,
+  directory 0700, synchronous, never throws. The CLI's auth log is written through it.
+
+### Deprecated
+
+- `SCOPES_WRITE` (an alias of `SCOPES_ALL`).
+- `GMAIL_API_CREDENTIALS_MODIFY`: read only by the migration, with a one-line notice when set.
+
 ## [0.8.1] - 2026-11-15
 
 ### Fixed

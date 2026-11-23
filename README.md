@@ -37,7 +37,7 @@ const manifest = await fetchThreadAttachments(gmail, "18c9f0a1b2d3e4f5", {
 ## CLI
 
 ```bash
-deno task cli login                      # browser sign-in, gmail.readonly only
+deno task cli login                      # browser sign-in: read, labels and drafts in one consent
 deno task cli whoami
 deno task cli search -q 'from:supplier.example has:attachment newer_than:90d'
 deno task cli search -q 'from:supplier.example newer_than:90d' --threads   # grouped by thread
@@ -45,7 +45,7 @@ deno task cli read --thread 18c9f0a1b2d3e4f5 --max-chars 4000             # bodi
 deno task cli attachments list  --thread 18c9f0a1b2d3e4f5
 deno task cli attachments fetch --thread 18c9f0a1b2d3e4f5 --out ./july-invoices --include '*.pdf' --include '*.xlsx'
 deno task cli attachments fetch --thread 18c9f0a1b2d3e4f5 --out ./july-invoices --skip-existing   # re-run: only what's new
-deno task cli logout                     # revokes at Google, then deletes locally
+deno task cli logout --yes               # revokes at Google, then deletes locally (asks first without --yes)
 ```
 
 Add `--json` to any command for machine-readable output. `--account <email>` picks a mailbox when
@@ -84,13 +84,36 @@ refusing because an earlier message to the same address failed; `bounces --recip
 that first failure and the remote server's reason. Gmail words any rejection by a "Send mail
 as" relay as a misconfigured alias, so read the relay's own diagnostic rather than Gmail's text.
 
-## Writes: labels and drafts (0.3.0, opt-in)
+## What the sign-in can do (0.9.0: one sign-in)
 
-Writing needs a second grant and a separate import. The read-only credential is never widened.
+Since 0.9.0 the CLI asks for one consent covering every scope the package uses:
+`gmail.readonly`, `gmail.modify` (labels) and `gmail.compose` (drafts), stored in
+`credentials.json`. Those Google scopes allow more than this package does: `gmail.modify` can trash
+mail and `gmail.compose` can send it. The code never does either. Writes exist only on
+`GmailWriter` and `GuardedWriter`, every write checks the granted scope locally first, and there is
+no send, trash or delete method anywhere in the package. The library's own `loginInteractive` still
+defaults to read-only; pass `SCOPES_ALL` to widen it.
+
+Upgrading from 0.3–0.8, which kept the write sign-in in `credentials.modify.json`: the first CLI
+command after the upgrade moves it into `credentials.json` (with a backup), renames the old file
+and leaves a note in its place. Nothing is revoked and no new consent is needed.
+
+The move is the library's `migrateSplitCredentials({ path, legacyPath, now? })`, so any tool
+holding the same two files can run it: paths are passed in, it makes no network call and never
+revokes, and it returns `{ migrated, accounts, backup?, renamedTo?, tombstone?, warning? }`. A
+legacy file that is not valid JSON is left untouched and reported in `warning`, never thrown.
+
+`appendAuthLog(path, event, extra?)` writes one sign-in event (login, logout, refresh retry or
+failure; never a token) as a JSON line, file 0600 and folder 0700, with `extra` fields such as
+`grant` or `via`. It is synchronous, so the line lands before a failing process exits, and it
+never throws.
+
+`logout` revokes at Google, and a revoke cancels this app's whole grant for you: every saved
+sign-in stops working, in every tool. So without `--yes` it only asks "Are you sure?" and exits 1.
 
 ```bash
-deno task cli login --write     # consents to gmail.modify + gmail.compose; stored in credentials.modify.json
-deno task cli whoami --write    # proves the write grant; non-zero if absent
+deno task cli login             # one consent: read, labels and drafts
+deno task cli whoami            # shows the sign-in's scopes and canWrite; non-zero if not signed in
 deno task cli labels
 deno task cli label create organiser/2026/review          # creates parents too; idempotent
 deno task cli label apply organiser/2026/review --ids 18c9…,18ca…          # dry run
@@ -105,7 +128,7 @@ import { GmailClient, GmailWriter, FileTokenStore, loadClientSecretFile } from "
 
 const gmail = await GmailClient.fromStore({
   clientSecret: await loadClientSecretFile(`${home}/.simt/gmail-api/client-secret.json`),
-  store: new FileTokenStore({ path: `${home}/.simt/gmail-api/credentials.modify.json` }),
+  store: new FileTokenStore({ path: `${home}/.simt/gmail-api/credentials.json` }),
 });
 const w = new GmailWriter(gmail);
 const label = await w.ensureLabel("organiser/2026/review");
@@ -232,8 +255,8 @@ Then:
 - `rule --message <id> --is keep [--never delete] [--sender]` records your verdict. Rulings form a
   golden set that `score --run first` checks every later decide against; `--sender` also rules
   everything from that sender.
-- `apply --run first --apply` writes the labels. It needs the write grant from
-  `deno task cli login --write`, and every applied change is logged, ids included, in the run's
+- `apply --run first --apply` writes the labels. It needs the modify scope, which
+  `deno task cli login` grants, and every applied change is logged, ids included, in the run's
   `apply.<scheme>.log`, so it can be undone.
 - `reconcile --run first` compares the labels in Gmail with the decisions, and catches a label
   moved by hand.
@@ -273,4 +296,5 @@ library reads no environment, so every path, client and key is passed in.
 - Attachment ids are ephemeral. `listAttachments` output is fetch-then-use; never persist an id.
 - Filenames are written as sent (Gmail's `(1)` suffixes included); only path separators and control
   characters are replaced, and collisions get `(2)`, `(3)`….
-- `logout` deletes the local credential even if the revoke call fails, and says so.
+- `logout --yes` deletes the local credential even if the revoke call fails, and says so. Without
+  `--yes` it changes nothing: a revoke ends every sign-in for the app, so it asks first.

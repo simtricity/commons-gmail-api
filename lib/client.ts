@@ -2,7 +2,7 @@
  * `GmailClient` — typed reads against the Gmail REST API with transparent token refresh.
  *
  * Every typed method here is a GET. Writes live on `GmailWriter` (`./writes.ts`), which needs a
- * wider grant at login (`SCOPES_WRITE`) and is a separate import by design.
+ * wider grant at login (`SCOPES_ALL`) and is a separate import by design.
  * @module
  */
 
