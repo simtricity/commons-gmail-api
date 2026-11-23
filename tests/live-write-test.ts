@@ -14,7 +14,7 @@ Deno.test({
   name: "label create/apply/remove/delete and draft create/delete round-trip, self-cleaning",
   ignore: !enabled,
   async fn() {
-    const ctx = contextFromEnv({ write: true });
+    const ctx = contextFromEnv({});
     const gmail = await GmailClient.fromStore({
       clientSecret: await loadClientSecretFile(ctx.clientSecretPath),
       store: ctx.store,

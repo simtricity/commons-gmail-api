@@ -7,11 +7,11 @@
  *   deno task cli <command> [options]
  *
  * Commands:
- *   login        [--account <email>] [--write]    Sign in (browser). Read-only scope;
- *                --write asks for gmail.modify + gmail.compose too and stores the grant
- *                in credentials.modify.json, leaving the read-only credential untouched.
+ *   login        [--account <email>]              Sign in (browser): one consent for read,
+ *                labels and drafts (gmail.readonly, gmail.modify, gmail.compose), stored in
+ *                credentials.json. --write is accepted and ignored.
  *   logout       [--account <email>]              Revoke at Google and forget.
- *   whoami       [--write]                        Runtime, store, grant, mailbox — one line each.
+ *   whoami                                        Runtime, store, scopes, mailbox — one line each.
  *   accounts     [--default <email>]              List signed-in mailboxes / set default.
  *   search       -q <gmail query> [--max N] [--threads]   Message ids + metadata, or grouped by
  *                thread with --threads. No bodies.
@@ -26,7 +26,7 @@
  *                [--include <glob>]... [--filename <exact>]... [--inline] [--max-bytes N]
  *                [--skip-existing [dir]] [--dry-run]
  *
- *   Writes (use the write grant from `login --write`; never send, trash or delete mail):
+ *   Writes (need the modify and compose scopes `login` grants; never send, trash or delete):
  *   labels                                        List labels with ids
  *   label create <name>                           Create (nested "a/b/c" creates parents); idempotent
  *   label apply  <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply; max 25 ids
@@ -59,7 +59,7 @@
  * Environment:
  *   GMAIL_CLIENT_SECRET_PATH   default ~/.simt/gmail-api/client-secret.json
  *   GMAIL_API_CREDENTIALS      default ~/.simt/gmail-api/credentials.json
- *   GMAIL_API_CREDENTIALS_MODIFY  default ~/.simt/gmail-api/credentials.modify.json (--write)
+ *   GMAIL_API_CREDENTIALS_MODIFY  read only to migrate the old write sign-in (deprecated)
  *   GMAIL_API_LOOPBACK_PORT    default 8731
  *   GMAIL_NO_BROWSER=1         print the auth URL instead of opening a browser
  *   GMAIL_API_AUTH_LOG         default ~/.simt/gmail-api/auth.log (sign-in events, never tokens)
@@ -129,7 +129,7 @@ function usage(): void {
 Usage: deno task cli <command> [options]
 
 Commands:
-  login        [--account <email>] [--write]    Sign in via browser (gmail.readonly; --write adds modify+compose)
+  login        [--account <email>]              Sign in via browser: read, labels and drafts in one consent
   labels                                        List labels with ids
   label create <name>                           Create label (parents too); idempotent   [write]
   label apply|remove <name> --ids a,b,c [--threads] [--apply]   Dry run unless --apply   [write]
@@ -145,7 +145,7 @@ Commands:
                [--expect-message <msgId>]   anything not given is kept
   drafts       [--max N] [-q <query>]          List drafts (newest first; default 20)
   logout       [--account <email>]              Revoke at Google and forget
-  whoami       [--write]                        Runtime, store, grant, mailbox
+  whoami                                        Runtime, store, scopes, mailbox
   accounts     [--default <email>]              List mailboxes / set default
   search       -q <gmail query> [--max N] [--threads]   Ids + metadata (grouped by thread with --threads)
   read         --thread <id> | --message <id> [--max-chars N]   Headers + body text + auth line
@@ -173,13 +173,9 @@ if (!command || args.help) {
   Deno.exit(command ? 0 : 1);
 }
 
-// Write commands always use the write credential file.
-const WRITE_COMMANDS = ["label", "draft"];
-const ctx = commands.contextFromEnv({
-  account: args.account,
-  json: args.json,
-  write: args.write || WRITE_COMMANDS.includes(command ?? ""),
-});
+// One sign-in since 0.9.0: --write is accepted and ignored.
+if (args.write) console.error(commands.WRITE_FLAG_IGNORED);
+const ctx = commands.contextFromEnv({ account: args.account, json: args.json });
 
 try {
   switch (command) {

@@ -21,8 +21,7 @@ import {
   parseGmailId,
   rawMessage,
   readMessages,
-  SCOPE_READONLY,
-  SCOPES_WRITE,
+  SCOPES_ALL,
   searchThreads,
   sha256Hex,
   summarize,
@@ -36,9 +35,8 @@ export interface Context {
   account?: string;
   json: boolean;
   clientSecretPath: string;
+  /** The one credential file: every command uses it (since 0.9.0). */
   credentialsPath: string;
-  /** True when --write selected the modify/compose credential file. */
-  write: boolean;
   loopbackPort: number;
   noBrowser: boolean;
   store: FileTokenStore;
@@ -47,22 +45,19 @@ export interface Context {
 }
 
 export function contextFromEnv(
-  input: { account?: string; json?: boolean; write?: boolean },
+  input: { account?: string; json?: boolean },
 ): Context {
   const home = Deno.env.get("HOME") ?? ".";
   const clientSecretPath = Deno.env.get("GMAIL_CLIENT_SECRET_PATH") ??
     `${home}/.simt/gmail-api/client-secret.json`;
-  // The write grant lives in its own file so read-only consumers never inherit it.
-  const credentialsPath = input.write
-    ? Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY") ??
-      `${home}/.simt/gmail-api/credentials.modify.json`
-    : Deno.env.get("GMAIL_API_CREDENTIALS") ?? `${home}/.simt/gmail-api/credentials.json`;
+  // One sign-in, one file (0.9.0). The old write file is migrated by `migrateFromEnv`.
+  const credentialsPath = Deno.env.get("GMAIL_API_CREDENTIALS") ??
+    `${home}/.simt/gmail-api/credentials.json`;
   return {
     account: input.account ?? Deno.env.get("GMAIL_ACCOUNT") ?? undefined,
     json: input.json ?? false,
     clientSecretPath,
     credentialsPath,
-    write: input.write ?? false,
     loopbackPort: Number(Deno.env.get("GMAIL_API_LOOPBACK_PORT") ?? "8731"),
     noBrowser: Deno.env.get("GMAIL_NO_BROWSER") === "1",
     store: new FileTokenStore({ path: credentialsPath }),
@@ -70,35 +65,58 @@ export function contextFromEnv(
   };
 }
 
+/** The printed form of `--write`, which 0.9.0 no longer needs. */
+export const WRITE_FLAG_IGNORED =
+  "--write is no longer needed: login grants read, labels and drafts in one sign-in.";
+
+/** The scopes the CLI's `login` asks for: every scope the package uses, in one consent. */
+export const LOGIN_SCOPES: readonly string[] = SCOPES_ALL;
+
+/** Scope short names (`readonly`, `modify`, `compose`). */
+export const scopeNames = (scope: string | string[]): string[] =>
+  (Array.isArray(scope) ? scope : scope.split(" ")).filter(Boolean).map((s) =>
+    s.split("/").at(-1)!.replace(/^gmail\./, "")
+  );
+
+/** The short scope names the stored sign-in for `account` holds; [] when unreadable. */
+function storedGrant(credentialsPath: string, account: string | undefined): string[] {
+  try {
+    const file = JSON.parse(Deno.readTextFileSync(credentialsPath)) as {
+      default?: string;
+      accounts?: Record<string, { scope?: string }>;
+    };
+    const key = account?.toLowerCase() ?? file.default ?? "";
+    return scopeNames(file.accounts?.[key]?.scope ?? "");
+  } catch {
+    return []; // fallback: no readable credential file; the event is still logged
+  }
+}
+
 /**
- * Append one sign-in event to the auth log (0600), tagged with the grant. Synchronous, so the
- * line is on disk before an error exits the process. Never throws.
+ * Append one sign-in event to the auth log (0600), tagged with the stored sign-in's scope short
+ * names. Synchronous, so the line is on disk before an error exits the process. Never throws.
  */
-export function appendAuthLog(ctx: Pick<Context, "write" | "authLogPath">, e: AuthEvent): void {
+export function appendAuthLog(
+  ctx: Pick<Context, "credentialsPath" | "authLogPath">,
+  e: AuthEvent,
+): void {
   try {
     Deno.mkdirSync(dirname(ctx.authLogPath), { recursive: true, mode: 0o700 });
-    const line = JSON.stringify({ ...e, grant: ctx.write ? "write" : "readonly" }) + "\n";
+    const grant = e.scopes ? scopeNames(e.scopes) : storedGrant(ctx.credentialsPath, e.account);
+    const line = JSON.stringify({ ...e, grant }) + "\n";
     Deno.writeTextFileSync(ctx.authLogPath, line, { append: true, mode: 0o600 });
   } catch {
     // fallback: an unwritable log never breaks a Gmail command; the error still reaches the user.
   }
 }
 
-/**
- * An error's message for this context: "Run login." names the right grant's command, and a
- * refused or failed refresh points at the auth log.
- */
-export function errorText(ctx: Pick<Context, "write" | "authLogPath">, e: unknown): string {
-  let text = e instanceof Error ? e.message : String(e);
-  if (ctx.write) text = text.replace(/\bRun login\.$/, "Run login --write.");
+/** An error's message for this context: a refused or failed refresh points at the auth log. */
+export function errorText(ctx: Pick<Context, "authLogPath">, e: unknown): string {
+  const text = e instanceof Error ? e.message : String(e);
   const refresh = e instanceof TokenEndpointError ||
     (e instanceof NotSignedInError && e.cause instanceof OAuthError);
   return refresh ? `${text} Details: ${ctx.authLogPath}` : text;
 }
-
-/** The command that replaces this context's grant. */
-export const loginCommand = (ctx: Pick<Context, "write">): string =>
-  ctx.write ? "login --write" : "login";
 
 function out(ctx: Context, data: unknown, human: () => void): void {
   if (ctx.json) console.log(JSON.stringify(data, null, 2));
@@ -120,10 +138,14 @@ export async function client(ctx: Context): Promise<GmailClient> {
   });
 }
 
-export async function login(ctx: Context): Promise<void> {
-  const cred = await loginInteractive({
-    clientSecret: await secret(ctx),
-    scopes: ctx.write ? [...SCOPES_WRITE] : [SCOPE_READONLY],
+/** `login`: one browser consent for every scope the package uses, saved to the one file. */
+export async function login(
+  ctx: Context,
+  deps: { loginInteractive?: typeof loginInteractive; clientSecret?: ClientSecret } = {},
+): Promise<void> {
+  const cred = await (deps.loginInteractive ?? loginInteractive)({
+    clientSecret: deps.clientSecret ?? await secret(ctx),
+    scopes: [...LOGIN_SCOPES],
     port: ctx.loopbackPort,
     expectedEmail: ctx.account,
     openBrowser: ctx.noBrowser ? () => false : undefined,
@@ -174,7 +196,6 @@ export async function whoami(ctx: Context): Promise<void> {
     accounts: await ctx.store.list(),
     defaultAccount: await ctx.store.defaultAccount(),
     requestedAccount: ctx.account ?? null,
-    grant: ctx.write ? "write" : "readonly",
     scopes: (await ctx.store.load(ctx.account))?.scope.split(" ").filter(Boolean) ?? [],
   };
   let live: string | undefined;
@@ -202,11 +223,7 @@ export async function whoami(ctx: Context): Promise<void> {
   report.authLogPath = ctx.authLogPath;
   out(ctx, report, () => {
     console.log(`runtime        ${report.runtime} on ${report.os}`);
-    console.log(
-      `grant          ${report.grant}: ${
-        (report.scopes as string[]).map((x) => x.split("/").at(-1)).join(", ") || "(none)"
-      }`,
-    );
+    console.log(`scopes         ${scopeNames(report.scopes as string[]).join(", ") || "(none)"}`);
     console.log(
       `client secret  ${ctx.clientSecretPath} ${report.clientSecretPresent ? "✓" : "✗ missing"}`,
     );
@@ -225,9 +242,7 @@ export async function whoami(ctx: Context): Promise<void> {
       if (f) {
         console.log(
           `last failure   ${f.at} ${f.status ?? "no response"}${f.code ? ` ${f.code}` : ""} — ${
-            f.rejected
-              ? `Google refused the sign-in: run ${loginCommand(ctx)}`
-              : "may pass; retry later"
+            f.rejected ? "Google refused the sign-in: run login" : "may pass; retry later"
           }`,
         );
       }
@@ -343,17 +358,13 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-// ── Writes (labels, drafts) — need --write / credentials.modify.json ────────
+// ── Writes (labels, drafts): the sign-in must hold modify and compose ─────────
 
 /** Per-call ceiling for ids on the CLI. Bulk consumers use GmailWriter directly. */
 export const CLI_MAX_IDS = DEFAULT_MAX_IDS;
 
+/** The guarded writer. A read-only sign-in fails locally with `InsufficientScopeError`. */
 async function guarded(ctx: Context): Promise<GuardedWriter> {
-  if (!ctx.write) {
-    throw new Error(
-      "write commands need the write grant: run `login --write` (uses credentials.modify.json)",
-    );
-  }
   const writer = new GmailWriter(await client(ctx), { log: (l) => console.error(`  ${l}`) });
   return new GuardedWriter(writer, {
     maxIds: CLI_MAX_IDS,

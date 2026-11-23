@@ -15,8 +15,16 @@ export const SCOPE_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
 export const SCOPE_MODIFY = "https://www.googleapis.com/auth/gmail.modify";
 /** Create and update drafts. Does not allow sending. */
 export const SCOPE_COMPOSE = "https://www.googleapis.com/auth/gmail.compose";
-/** The grant a writing client needs: read, labels, drafts. */
-export const SCOPES_WRITE: readonly string[] = [SCOPE_READONLY, SCOPE_MODIFY, SCOPE_COMPOSE];
+/**
+ * Every scope this package uses: read, labels, drafts. The CLI signs in with all three in one
+ * consent. The library's own default stays read-only; pass this to `loginInteractive` to widen.
+ */
+export const SCOPES_ALL: readonly string[] = [SCOPE_READONLY, SCOPE_MODIFY, SCOPE_COMPOSE];
+/**
+ * The grant a writing client needs: the same list as {@link SCOPES_ALL}.
+ * @deprecated Use {@link SCOPES_ALL}; kept so existing callers compile.
+ */
+export const SCOPES_WRITE: readonly string[] = SCOPES_ALL;
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
