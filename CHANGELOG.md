@@ -3,7 +3,7 @@
 All notable changes to `@simtricity-commons/gmail-api`. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [0.9.0] - unreleased
+## [0.9.0] - 2026-11-23
 
 ### Changed
 
