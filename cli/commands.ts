@@ -30,6 +30,12 @@ import {
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
 import type { ReadMessage } from "../lib/body.ts";
 import { basename, dirname, join } from "@std/path";
+import {
+  migrateWriteSignIn,
+  migrationNotice,
+  type MigrationResult,
+  MODIFY_ENV_DEPRECATED,
+} from "./migrate.ts";
 
 export interface Context {
   account?: string;
@@ -42,6 +48,34 @@ export interface Context {
   store: FileTokenStore;
   /** JSON-lines log of sign-in events (logins, refresh failures); never tokens. */
   authLogPath: string;
+}
+
+/**
+ * Run the one-time migration of the old write sign-in, before any credential is loaded. Prints
+ * one stderr line when it runs, and the deprecation when `GMAIL_API_CREDENTIALS_MODIFY` is set.
+ */
+export async function migrateFromEnv(): Promise<MigrationResult> {
+  const home = Deno.env.get("HOME") ?? ".";
+  const envModify = Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY");
+  if (envModify) console.error(MODIFY_ENV_DEPRECATED);
+  const modifyPath = envModify ?? `${home}/.simt/gmail-api/credentials.modify.json`;
+  try {
+    const r = await migrateWriteSignIn({
+      credentialsPath: Deno.env.get("GMAIL_API_CREDENTIALS") ??
+        `${home}/.simt/gmail-api/credentials.json`,
+      modifyPath,
+    });
+    if (r.ran) console.error(migrationNotice(r));
+    return r;
+  } catch (e) {
+    // fallback: an unreadable old write file must not stop every command; it is left untouched
+    // and named, so it can be moved by hand.
+    if (!(e instanceof SyntaxError)) throw e;
+    console.error(
+      `gmail-api: could not read ${modifyPath} to migrate it (${e.message}); left as is.`,
+    );
+    return { ran: false, copied: [], leftAlone: [] };
+  }
 }
 
 export function contextFromEnv(

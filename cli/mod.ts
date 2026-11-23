@@ -117,6 +117,9 @@ const args = parseArgs(Deno.args, {
 
 const [command, sub] = args._.map(String);
 
+// One sign-in since 0.9.0: move the old write sign-in across before anything loads a credential.
+await commands.migrateFromEnv();
+
 // organise has its own verbs, options and exit codes; it parses the arguments itself.
 if (command === "organise") {
   const at = Deno.args.indexOf("organise");
