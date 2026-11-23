@@ -10,7 +10,8 @@
  *   login        [--account <email>]              Sign in (browser): one consent for read,
  *                labels and drafts (gmail.readonly, gmail.modify, gmail.compose), stored in
  *                credentials.json. --write is accepted and ignored.
- *   logout       [--account <email>]              Revoke at Google and forget.
+ *   logout       --yes [--account <email>]        Revoke at Google and forget. Without --yes it only
+ *                asks "Are you sure?" and exits 1: a revoke ends every sign-in for this app.
  *   whoami                                        Runtime, store, scopes, mailbox — one line each.
  *   accounts     [--default <email>]              List signed-in mailboxes / set default.
  *   search       -q <gmail query> [--max N] [--threads]   Message ids + metadata, or grouped by
@@ -109,6 +110,7 @@ const args = parseArgs(Deno.args, {
     "quote",
     "reply-all",
     "signature",
+    "yes",
   ],
   negatable: ["quote"],
   default: { quote: true },
@@ -147,7 +149,8 @@ Commands:
                [--attach <path>]... [--remove <name>,<name>] [--no-quote] [--signature]
                [--expect-message <msgId>]   anything not given is kept
   drafts       [--max N] [-q <query>]          List drafts (newest first; default 20)
-  logout       [--account <email>]              Revoke at Google and forget
+  logout       --yes [--account <email>]        Revoke at Google and forget. Without --yes it only
+               asks "Are you sure?" and exits 1: a revoke ends every sign-in for this app
   whoami                                        Runtime, store, scopes, mailbox
   accounts     [--default <email>]              List mailboxes / set default
   search       -q <gmail query> [--max N] [--threads]   Ids + metadata (grouped by thread with --threads)
@@ -185,9 +188,11 @@ try {
     case "login":
       await commands.login(ctx);
       break;
-    case "logout":
-      await commands.logout(ctx);
+    case "logout": {
+      const code = await commands.logout(ctx, { yes: args.yes });
+      if (code) Deno.exit(code);
       break;
+    }
     case "whoami":
       await commands.whoami(ctx);
       break;

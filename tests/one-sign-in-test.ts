@@ -13,7 +13,15 @@ import {
   SCOPES_ALL,
   SCOPES_WRITE,
 } from "../mod.ts";
-import { contextFromEnv, login, LOGIN_SCOPES, WRITE_FLAG_IGNORED } from "../cli/commands.ts";
+import {
+  contextFromEnv,
+  login,
+  LOGIN_SCOPES,
+  logout,
+  LOGOUT_QUESTION,
+  logoutQuestion,
+  WRITE_FLAG_IGNORED,
+} from "../cli/commands.ts";
 import { migrateWriteSignIn } from "../cli/migrate.ts";
 
 export const ALL = `${SCOPE_READONLY} ${SCOPE_MODIFY} ${SCOPE_COMPOSE}`;
@@ -186,5 +194,89 @@ Deno.test("migration: copies into a missing file, keeps others, leaves complete 
     assertEquals([r.copied, r.leftAlone, r.backup], [[], ["a@home.test"], undefined]);
     assertEquals(await Deno.readTextFile(credentialsPath), readFile, "unchanged, byte for byte");
     assert(r.renamedTo && r.tombstone, "the old file is still retired");
+  });
+});
+
+// ── logout asks first ───────────────────────────────────────────────────────
+
+/** stdout lines written while `fn` runs. */
+async function capture(fn: () => Promise<unknown>): Promise<{ lines: string[]; value: unknown }> {
+  const lines: string[] = [];
+  const real = console.log;
+  console.log = (...a: unknown[]) => lines.push(a.map(String).join(" "));
+  try {
+    return { lines, value: await fn() };
+  } finally {
+    console.log = real;
+  }
+}
+
+const EXACT =
+  `Are you sure? Logging out revokes this app's access at Google for owner@home.test: every saved sign-in for it stops
+working, in every session and tool that uses it, and a new browser login is needed.
+If you are an agent, you must pass this "Are you sure?" to your user and wait for their answer.
+Re-run with --yes to log out.`;
+
+Deno.test("logout without --yes: the exact question, exit 1, no network, the file untouched", async () => {
+  await withTempHome(async (dir) => {
+    const path = `${dir}/credentials.json`;
+    const file = store({ "owner@home.test": cred("owner@home.test", ALL) });
+    await Deno.writeTextFile(path, file, { mode: 0o600 });
+    assertEquals(logoutQuestion("owner@home.test"), EXACT);
+    assert(LOGOUT_QUESTION.includes("<email>"));
+
+    const human = await offline(() => capture(() => logout(contextFromEnv({}))));
+    assertEquals(human.value, 1);
+    assertEquals(human.lines, [EXACT]);
+
+    const json = await offline(() => capture(() => logout(contextFromEnv({ json: true }))));
+    assertEquals(json.value, 1);
+    assertEquals(JSON.parse(json.lines.join("\n")), {
+      confirmRequired: true,
+      message: EXACT,
+      email: "owner@home.test",
+    });
+    assertEquals(await Deno.readTextFile(path), file, "byte-identical");
+  });
+});
+
+Deno.test("logout --yes revokes at Google and forgets the account, as before", async () => {
+  await withTempHome(async (dir) => {
+    const path = `${dir}/credentials.json`;
+    await Deno.writeTextFile(
+      path,
+      store({ "owner@home.test": cred("owner@home.test", ALL, "r-1") }),
+    );
+    await Deno.writeTextFile(
+      `${dir}/client-secret.json`,
+      JSON.stringify({ installed: { client_id: "id", client_secret: "s" } }),
+    );
+    const keep = Deno.env.get("GMAIL_CLIENT_SECRET_PATH");
+    const keepLog = Deno.env.get("GMAIL_API_AUTH_LOG");
+    Deno.env.set("GMAIL_CLIENT_SECRET_PATH", `${dir}/client-secret.json`);
+    Deno.env.set("GMAIL_API_AUTH_LOG", `${dir}/auth.log`);
+    const seen: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (input, init) => {
+      seen.push(`${String(input)} ${String(init?.body)}`);
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+    try {
+      const r = await capture(() => logout(contextFromEnv({ json: true }), { yes: true }));
+      assertEquals(r.value, 0);
+      assertEquals(JSON.parse(r.lines.join("\n")), { email: "owner@home.test", revoked: true });
+    } finally {
+      globalThis.fetch = real;
+      if (keep === undefined) Deno.env.delete("GMAIL_CLIENT_SECRET_PATH");
+      else Deno.env.set("GMAIL_CLIENT_SECRET_PATH", keep);
+      if (keepLog === undefined) Deno.env.delete("GMAIL_API_AUTH_LOG");
+      else Deno.env.set("GMAIL_API_AUTH_LOG", keepLog);
+    }
+    assertEquals(seen.length, 1);
+    assert(
+      seen[0].startsWith("https://oauth2.googleapis.com/revoke") && seen[0].includes("token=r-1"),
+    );
+    assertEquals(JSON.parse(await Deno.readTextFile(path)).accounts, {});
+    assert((await Deno.readTextFile(`${dir}/auth.log`)).includes('"event":"logout"'));
   });
 });

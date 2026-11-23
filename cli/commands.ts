@@ -205,7 +205,36 @@ export async function login(
   );
 }
 
-export async function logout(ctx: Context): Promise<void> {
+/**
+ * What `logout` prints instead of logging out when `--yes` is absent. One constant, so the skill
+ * and the tests use the same words; `<email>` is replaced with the account.
+ */
+export const LOGOUT_QUESTION =
+  `Are you sure? Logging out revokes this app's access at Google for <email>: every saved sign-in for it stops
+working, in every session and tool that uses it, and a new browser login is needed.
+If you are an agent, you must pass this "Are you sure?" to your user and wait for their answer.
+Re-run with --yes to log out.`;
+
+/** {@link LOGOUT_QUESTION} for one account. */
+export const logoutQuestion = (email: string): string => LOGOUT_QUESTION.replace("<email>", email);
+
+/**
+ * `logout`. Without `yes` it does nothing at all (no revoke, no file change, no network) and
+ * returns exit code 1 after printing {@link LOGOUT_QUESTION}: a revoke cancels the app's whole
+ * grant for the user, every saved sign-in with it. There is no interactive prompt, which would
+ * hang an agent's shell; the flag is the confirmation. With `yes`: revoke, forget, log.
+ */
+export async function logout(ctx: Context, opts: { yes?: boolean } = {}): Promise<number> {
+  if (!opts.yes) {
+    const saved = await ctx.store.load(ctx.account);
+    if (!saved) {
+      out(ctx, { signedIn: false }, () => console.log("Not signed in: nothing to log out."));
+      return 0;
+    }
+    const message = logoutQuestion(saved.email);
+    out(ctx, { confirmRequired: true, message, email: saved.email }, () => console.log(message));
+    return 1;
+  }
   const gmail = await client(ctx);
   const email = await gmail.email();
   const { revoked } = await gmail.logout();
@@ -217,6 +246,7 @@ export async function logout(ctx: Context): Promise<void> {
         : `Forgot ${email}, but Google did not confirm the revoke — check https://myaccount.google.com/permissions`,
     );
   });
+  return 0;
 }
 
 /** Exits non-zero when live access fails — infra probes rely on the exit code. */
