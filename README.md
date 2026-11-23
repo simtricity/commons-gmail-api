@@ -98,6 +98,16 @@ Upgrading from 0.3–0.8, which kept the write sign-in in `credentials.modify.js
 command after the upgrade moves it into `credentials.json` (with a backup), renames the old file
 and leaves a note in its place. Nothing is revoked and no new consent is needed.
 
+The move is the library's `migrateSplitCredentials({ path, legacyPath, now? })`, so any tool
+holding the same two files can run it: paths are passed in, it makes no network call and never
+revokes, and it returns `{ migrated, accounts, backup?, renamedTo?, tombstone?, warning? }`. A
+legacy file that is not valid JSON is left untouched and reported in `warning`, never thrown.
+
+`appendAuthLog(path, event, extra?)` writes one sign-in event (login, logout, refresh retry or
+failure; never a token) as a JSON line, file 0600 and folder 0700, with `extra` fields such as
+`grant` or `via`. It is synchronous, so the line lands before a failing process exits, and it
+never throws.
+
 `logout` revokes at Google, and a revoke cancels this app's whole grant for you: every saved
 sign-in stops working, in every tool. So without `--yes` it only asks "Are you sure?" and exits 1.
 

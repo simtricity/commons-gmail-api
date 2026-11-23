@@ -46,7 +46,7 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
   drafts, decided in the workspace spec `../_specs/delivered/SPEC-GMAIL-API-WRITE-SUPPORT-2026-09-22.md` (2026-09-22). No send, trash or delete; adding any of
   those is a new decision and a new spec. Since 0.9.0 the CLI holds **one sign-in** with every
   scope (`SCOPES_ALL`) in `credentials.json`; the old `credentials.modify.json` is migrated, never
-  revoked (`cli/migrate.ts`; spec `../_specs/current/SPEC-GMAIL-API-ONE-SIGN-IN-2026-11-23.md`).
+  revoked (`lib/migrate.ts`, called by the CLI and the skill; spec `../_specs/current/SPEC-GMAIL-API-ONE-SIGN-IN-2026-11-23.md`).
   The library default stays read-only. `logout` without `--yes` only asks: a revoke ends the app's
   whole grant for the user.
 - Never log or echo the client secret, refresh token, or attachment ids in error text.

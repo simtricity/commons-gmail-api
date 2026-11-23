@@ -4,6 +4,7 @@
  */
 
 import {
+  appendAuthLog,
   type AuthEvent,
   type ClientSecret,
   DEFAULT_MAX_IDS,
@@ -16,6 +17,8 @@ import {
   GuardedWriter,
   loadClientSecretFile,
   loginInteractive,
+  migrateSplitCredentials,
+  type MigrationResult,
   NotSignedInError,
   OAuthError,
   parseGmailId,
@@ -31,13 +34,7 @@ import {
 } from "../lib/mod.ts";
 import type { FetchAttachmentsOptions } from "../lib/attachments.ts";
 import type { ReadMessage } from "../lib/body.ts";
-import { basename, dirname, join } from "@std/path";
-import {
-  migrateWriteSignIn,
-  migrationNotice,
-  type MigrationResult,
-  MODIFY_ENV_DEPRECATED,
-} from "./migrate.ts";
+import { basename, join } from "@std/path";
 
 export interface Context {
   account?: string;
@@ -60,25 +57,27 @@ export async function migrateFromEnv(): Promise<MigrationResult> {
   const home = Deno.env.get("HOME") ?? ".";
   const envModify = Deno.env.get("GMAIL_API_CREDENTIALS_MODIFY");
   if (envModify) console.error(MODIFY_ENV_DEPRECATED);
-  const modifyPath = envModify ?? `${home}/.simt/gmail-api/credentials.modify.json`;
-  try {
-    const r = await migrateWriteSignIn({
-      credentialsPath: Deno.env.get("GMAIL_API_CREDENTIALS") ??
-        `${home}/.simt/gmail-api/credentials.json`,
-      modifyPath,
-    });
-    if (r.ran) console.error(migrationNotice(r));
-    return r;
-  } catch (e) {
-    // fallback: an unreadable old write file must not stop every command; it is left untouched
-    // and named, so it can be moved by hand.
-    if (!(e instanceof SyntaxError)) throw e;
-    console.error(
-      `gmail-api: could not read ${modifyPath} to migrate it (${e.message}); left as is.`,
-    );
-    return { ran: false, copied: [], leftAlone: [] };
-  }
+  const r = await migrateSplitCredentials({
+    path: Deno.env.get("GMAIL_API_CREDENTIALS") ?? `${home}/.simt/gmail-api/credentials.json`,
+    legacyPath: envModify ?? `${home}/.simt/gmail-api/credentials.modify.json`,
+  });
+  if (r.warning) console.error(`gmail-api: ${r.warning}.`);
+  if (r.migrated) console.error(migrationNotice(r));
+  return r;
 }
+
+/** One stderr line describing a migration that ran. */
+export function migrationNotice(r: MigrationResult): string {
+  const what = r.accounts.length
+    ? `moved the write sign-in for ${r.accounts.join(", ")} into the one credential file`
+    : "found nothing to copy from the old write sign-in file";
+  return `gmail-api: ${what}; old file kept as ${r.renamedTo}` +
+    (r.backup ? `, backup ${r.backup}` : "") + ". Nothing was revoked.";
+}
+
+/** The deprecation line printed when `GMAIL_API_CREDENTIALS_MODIFY` is set. */
+export const MODIFY_ENV_DEPRECATED =
+  "GMAIL_API_CREDENTIALS_MODIFY is deprecated: it is read only to migrate the old write sign-in.";
 
 export function contextFromEnv(
   input: { account?: string; json?: boolean },
@@ -129,21 +128,15 @@ function storedGrant(credentialsPath: string, account: string | undefined): stri
 }
 
 /**
- * Append one sign-in event to the auth log (0600), tagged with the stored sign-in's scope short
- * names. Synchronous, so the line is on disk before an error exits the process. Never throws.
+ * Record one sign-in event in the context's auth log, tagged with the sign-in's scope short
+ * names (`grant`). The appending itself is the library's {@link appendAuthLog}; never throws.
  */
-export function appendAuthLog(
+export function recordAuthEvent(
   ctx: Pick<Context, "credentialsPath" | "authLogPath">,
   e: AuthEvent,
 ): void {
-  try {
-    Deno.mkdirSync(dirname(ctx.authLogPath), { recursive: true, mode: 0o700 });
-    const grant = e.scopes ? scopeNames(e.scopes) : storedGrant(ctx.credentialsPath, e.account);
-    const line = JSON.stringify({ ...e, grant }) + "\n";
-    Deno.writeTextFileSync(ctx.authLogPath, line, { append: true, mode: 0o600 });
-  } catch {
-    // fallback: an unwritable log never breaks a Gmail command; the error still reaches the user.
-  }
+  const grant = e.scopes ? scopeNames(e.scopes) : storedGrant(ctx.credentialsPath, e.account);
+  appendAuthLog(ctx.authLogPath, e, { grant });
 }
 
 /** An error's message for this context: a refused or failed refresh points at the auth log. */
@@ -170,7 +163,7 @@ export async function client(ctx: Context): Promise<GmailClient> {
     store: ctx.store,
     account: ctx.account,
     log: (l) => console.error(`  ${l}`),
-    onAuthEvent: (e) => appendAuthLog(ctx, e),
+    onAuthEvent: (e) => recordAuthEvent(ctx, e),
   });
 }
 
@@ -187,7 +180,7 @@ export async function login(
     openBrowser: ctx.noBrowser ? () => false : undefined,
   });
   await ctx.store.save(cred);
-  appendAuthLog(ctx, {
+  recordAuthEvent(ctx, {
     at: new Date().toISOString(),
     event: "login",
     account: cred.email,
@@ -240,7 +233,7 @@ export async function logout(ctx: Context, opts: { yes?: boolean } = {}): Promis
   const gmail = await client(ctx);
   const email = await gmail.email();
   const { revoked } = await gmail.logout();
-  appendAuthLog(ctx, { at: new Date().toISOString(), event: "logout", account: email });
+  recordAuthEvent(ctx, { at: new Date().toISOString(), event: "logout", account: email });
   out(ctx, { email, revoked }, () => {
     console.log(
       revoked

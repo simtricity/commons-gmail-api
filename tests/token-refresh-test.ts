@@ -4,6 +4,7 @@
  */
 import { assert, assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
 import {
+  appendAuthLog,
   type AuthEvent,
   GmailClient,
   MemoryTokenStore,
@@ -13,7 +14,7 @@ import {
   refreshAccessToken,
   TokenEndpointError,
 } from "../mod.ts";
-import { appendAuthLog, errorText } from "../cli/commands.ts";
+import { errorText, recordAuthEvent } from "../cli/commands.ts";
 
 const TOKEN = "https://oauth2.googleapis.com/token";
 const SECRET = { clientId: "id", clientSecret: "s" };
@@ -184,7 +185,7 @@ Deno.test("cli errorText: refresh failures point at the auth log; others pass th
   assertEquals(errorText({ authLogPath: log }, new Error("other")), "other");
 });
 
-Deno.test("cli appendAuthLog: one JSON line per event, 0600, tagged with scope names, never a token", async () => {
+Deno.test("cli recordAuthEvent: one JSON line per event, 0600, tagged with scope names, never a token", async () => {
   const dir = await Deno.makeTempDir({ prefix: "gmail-auth-log-" });
   const path = `${dir}/sub/auth.log`;
   const credentialsPath = `${dir}/credentials.json`;
@@ -204,14 +205,14 @@ Deno.test("cli appendAuthLog: one JSON line per event, 0600, tagged with scope n
       },
     }),
   );
-  appendAuthLog({ credentialsPath, authLogPath: path }, {
+  recordAuthEvent({ credentialsPath, authLogPath: path }, {
     at: "2026-11-08T00:00:00.000Z",
     event: "refresh-rejected",
     account: "owner@home.test",
     status: 400,
     code: "invalid_grant",
   });
-  appendAuthLog({ credentialsPath, authLogPath: path }, {
+  recordAuthEvent({ credentialsPath, authLogPath: path }, {
     at: "2026-11-08T00:00:01.000Z",
     event: "login",
     account: "owner@home.test",
@@ -229,6 +230,26 @@ Deno.test("cli appendAuthLog: one JSON line per event, 0600, tagged with scope n
   ]);
   assert(!text.includes('"r"'), "never a token");
   assertEquals(((await Deno.stat(path)).mode ?? 0) & 0o777, 0o600);
-  appendAuthLog({ credentialsPath: "/nope", authLogPath: "/dev/null/nope/auth.log" }, lines[0]); // never throws
+  recordAuthEvent({ credentialsPath: "/nope", authLogPath: "/dev/null/nope/auth.log" }, lines[0]); // never throws
   await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("lib appendAuthLog: one JSON line with extra fields, file 0600, dir 0700, never throws", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "gmail-lib-auth-log-" });
+  try {
+    const path = `${dir}/deep/er/auth.log`;
+    const ev = { at: "2026-11-23T00:00:00.000Z", event: "login" as const, account: "o@home.test" };
+    appendAuthLog(path, ev, { grant: ["readonly"], via: "test" });
+    appendAuthLog(path, { ...ev, event: "logout" as const });
+    const lines = (await Deno.readTextFile(path)).trim().split("\n").map((l) => JSON.parse(l));
+    assertEquals(lines, [
+      { ...ev, grant: ["readonly"], via: "test" },
+      { ...ev, event: "logout" },
+    ]);
+    assertEquals(((await Deno.stat(path)).mode ?? 0) & 0o777, 0o600);
+    assertEquals(((await Deno.stat(`${dir}/deep/er`)).mode ?? 0) & 0o777, 0o700);
+    appendAuthLog("/dev/null/nope/auth.log", ev); // never throws
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

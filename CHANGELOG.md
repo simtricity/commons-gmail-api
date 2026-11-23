@@ -27,6 +27,12 @@ All notable changes to `@simtricity-commons/gmail-api`. Format follows
 ### Added
 
 - `SCOPES_ALL`.
+- `migrateSplitCredentials({ path, legacyPath, now? })` in the library: the one-time move from
+  the two-file layout, paths passed in, no network, never a revoke; returns `{ migrated,
+  accounts, backup?, renamedTo?, tombstone?, warning? }`. The CLI's migration calls it, and
+  tools that vendor `lib/` can run the same code.
+- `appendAuthLog(path, event, extra?)` in the library: one JSON line per sign-in event, 0600,
+  directory 0700, synchronous, never throws. The CLI's auth log is written through it.
 
 ### Deprecated
 

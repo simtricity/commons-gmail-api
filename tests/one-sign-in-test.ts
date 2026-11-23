@@ -9,6 +9,7 @@ import {
   InsufficientScopeError,
   loginInteractive,
   MemoryTokenStore,
+  migrateSplitCredentials,
   type OAuthCredential,
   OAuthError,
   SCOPE_COMPOSE,
@@ -27,7 +28,6 @@ import {
   whoami,
   WRITE_FLAG_IGNORED,
 } from "../cli/commands.ts";
-import { migrateWriteSignIn } from "../cli/migrate.ts";
 
 export const ALL = `${SCOPE_READONLY} ${SCOPE_MODIFY} ${SCOPE_COMPOSE}`;
 
@@ -169,8 +169,10 @@ Deno.test("migration: the write sign-in replaces a read-only entry; backup, rena
       store({ "owner@home.test": cred("owner@home.test", ALL, "r-write") }),
       { mode: 0o600 },
     );
-    const r = await offline(() => migrateWriteSignIn({ credentialsPath, modifyPath, now: NOW }));
-    assertEquals(r.copied, ["owner@home.test"]);
+    const r = await offline(() =>
+      migrateSplitCredentials({ path: credentialsPath, legacyPath: modifyPath, now: NOW })
+    );
+    assertEquals([r.migrated, r.accounts], [true, ["owner@home.test"]]);
     const now = JSON.parse(await Deno.readTextFile(credentialsPath));
     assertEquals(now.accounts["owner@home.test"].refreshToken, "r-write");
     assertEquals(now.default, "owner@home.test");
@@ -184,9 +186,9 @@ Deno.test("migration: the write sign-in replaces a read-only entry; backup, rena
     }
 
     const again = await offline(() =>
-      migrateWriteSignIn({ credentialsPath, modifyPath, now: NOW })
+      migrateSplitCredentials({ path: credentialsPath, legacyPath: modifyPath, now: NOW })
     );
-    assertEquals(again, { ran: false, copied: [], leftAlone: [] }, "a second run is a no-op");
+    assertEquals(again, { migrated: false, accounts: [] }, "a second run is a no-op");
   });
 });
 
@@ -201,8 +203,10 @@ Deno.test("migration: copies into a missing file, keeps others, leaves complete 
         "b@home.test": cred("b@home.test", `${SCOPE_READONLY} ${SCOPE_MODIFY}`),
       }),
     );
-    const r = await offline(() => migrateWriteSignIn({ credentialsPath, modifyPath, now: NOW }));
-    assertEquals([r.copied, r.leftAlone, r.backup], [["a@home.test"], ["b@home.test"], undefined]);
+    const r = await offline(() =>
+      migrateSplitCredentials({ path: credentialsPath, legacyPath: modifyPath, now: NOW })
+    );
+    assertEquals([r.accounts, r.backup], [["a@home.test"], undefined], "b holds a partial grant");
     const now = JSON.parse(await Deno.readTextFile(credentialsPath));
     assertEquals(Object.keys(now.accounts), ["a@home.test"], "a partial grant is not copied");
   });
@@ -219,10 +223,27 @@ Deno.test("migration: copies into a missing file, keeps others, leaves complete 
       modifyPath,
       store({ "a@home.test": cred("a@home.test", ALL, "r-older") }),
     );
-    const r = await offline(() => migrateWriteSignIn({ credentialsPath, modifyPath, now: NOW }));
-    assertEquals([r.copied, r.leftAlone, r.backup], [[], ["a@home.test"], undefined]);
+    const r = await offline(() =>
+      migrateSplitCredentials({ path: credentialsPath, legacyPath: modifyPath, now: NOW })
+    );
+    assertEquals([r.migrated, r.accounts, r.backup], [true, [], undefined]);
     assertEquals(await Deno.readTextFile(credentialsPath), readFile, "unchanged, byte for byte");
     assert(r.renamedTo && r.tombstone, "the old file is still retired");
+  });
+});
+
+Deno.test("migration: a corrupt legacy file is reported, left untouched, and never throws", async () => {
+  await withTempHome(async (dir) => {
+    const credentialsPath = `${dir}/credentials.json`;
+    const modifyPath = `${dir}/credentials.modify.json`;
+    await Deno.writeTextFile(modifyPath, "{ not json");
+    const r = await offline(() =>
+      migrateSplitCredentials({ path: credentialsPath, legacyPath: modifyPath, now: NOW })
+    );
+    assertEquals([r.migrated, r.accounts], [false, []]);
+    assert(r.warning?.includes(modifyPath) && r.warning.includes("left as is"), r.warning);
+    assertEquals(await Deno.readTextFile(modifyPath), "{ not json");
+    await assertRejects(() => Deno.stat(credentialsPath), Deno.errors.NotFound);
   });
 });
 
