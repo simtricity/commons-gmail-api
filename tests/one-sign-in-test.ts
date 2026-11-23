@@ -41,16 +41,40 @@ export const cred = (email: string, scope: string, token = `r-${email}`): OAuthC
   savedAt: "2026-11-23T09:00:00.000Z",
 });
 
-/** A temp dir with `GMAIL_API_CREDENTIALS` pointed into it for the test's duration. */
+// ── Isolation: no test here may resolve a path from the real HOME ───────────
+//
+// The CLI resolves its credential file, client secret and auth log from HOME unless a GMAIL_*
+// variable says otherwise. For this whole file HOME is an empty guard dir and those overrides are
+// cleared, so anything that falls through to a default lands in the guard dir, and the last test
+// fails if it is not still empty. Each test then works in its own temp HOME (withTempHome).
+
+/** Every GMAIL_* path override the CLI reads; cleared for this file, restored at the end. */
+const PATH_VARS = [
+  "GMAIL_API_CREDENTIALS",
+  "GMAIL_API_CREDENTIALS_MODIFY",
+  "GMAIL_CLIENT_SECRET_PATH",
+  "GMAIL_API_AUTH_LOG",
+] as const;
+const REAL_ENV = Object.fromEntries(
+  ["HOME", ...PATH_VARS].map((k) => [k, Deno.env.get(k)]),
+) as Record<string, string | undefined>;
+const GUARD_HOME = await Deno.makeTempDir({ prefix: "gmail-guard-home-" });
+Deno.env.set("HOME", GUARD_HOME);
+for (const k of PATH_VARS) Deno.env.delete(k);
+
+/**
+ * A fresh temp dir as HOME, with `GMAIL_API_CREDENTIALS` at `<dir>/credentials.json`, for the
+ * test's duration. Every other CLI default (client secret, auth log) resolves inside it too.
+ */
 export async function withTempHome<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await Deno.makeTempDir({ prefix: "gmail-one-sign-in-" });
-  const keep = Deno.env.get("GMAIL_API_CREDENTIALS");
+  Deno.env.set("HOME", dir);
   Deno.env.set("GMAIL_API_CREDENTIALS", `${dir}/credentials.json`);
   try {
     return await fn(dir);
   } finally {
-    if (keep === undefined) Deno.env.delete("GMAIL_API_CREDENTIALS");
-    else Deno.env.set("GMAIL_API_CREDENTIALS", keep);
+    Deno.env.set("HOME", GUARD_HOME);
+    for (const k of PATH_VARS) Deno.env.delete(k);
     await Deno.remove(dir, { recursive: true });
   }
 }
@@ -353,5 +377,30 @@ Deno.test("whoami shows one sign-in and whether it can write", async () => {
         else Deno.env.set("GMAIL_CLIENT_SECRET_PATH", keep);
       }
     });
+  }
+});
+
+// ── Guard: runs last ────────────────────────────────────────────────────────
+
+/** Every path under `dir`, relative. */
+async function filesUnder(dir: string, rel = ""): Promise<string[]> {
+  const out: string[] = [];
+  for await (const e of Deno.readDir(`${dir}/${rel}`)) {
+    const p = rel ? `${rel}/${e.name}` : e.name;
+    out.push(p);
+    if (e.isDirectory) out.push(...await filesUnder(dir, p));
+  }
+  return out;
+}
+
+Deno.test("isolation guard: nothing above wrote under HOME outside its own temp dir", async () => {
+  try {
+    assertEquals(await filesUnder(GUARD_HOME), [], "a test resolved a default path from HOME");
+  } finally {
+    await Deno.remove(GUARD_HOME, { recursive: true });
+    for (const [k, v] of Object.entries(REAL_ENV)) {
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
   }
 });
