@@ -21,6 +21,8 @@ import {
   parseGmailId,
   rawMessage,
   readMessages,
+  SCOPE_COMPOSE,
+  SCOPE_MODIFY,
   SCOPES_ALL,
   searchThreads,
   sha256Hex,
@@ -262,6 +264,9 @@ export async function whoami(ctx: Context): Promise<void> {
     requestedAccount: ctx.account ?? null,
     scopes: (await ctx.store.load(ctx.account))?.scope.split(" ").filter(Boolean) ?? [],
   };
+  const held = report.scopes as string[];
+  // One sign-in since 0.9.0: it can write when it holds the modify and compose scopes.
+  report.canWrite = [SCOPE_MODIFY, SCOPE_COMPOSE].every((s) => held.includes(s));
   let live: string | undefined;
   let ok = false;
   try {
@@ -287,7 +292,12 @@ export async function whoami(ctx: Context): Promise<void> {
   report.authLogPath = ctx.authLogPath;
   out(ctx, report, () => {
     console.log(`runtime        ${report.runtime} on ${report.os}`);
-    console.log(`scopes         ${scopeNames(report.scopes as string[]).join(", ") || "(none)"}`);
+    console.log(
+      `sign-in        ${scopeNames(held).join(", ") || "(none)"}; ` +
+        (report.canWrite
+          ? "can write labels and drafts"
+          : "read-only: run login to add labels and drafts"),
+    );
     console.log(
       `client secret  ${ctx.clientSecretPath} ${report.clientSecretPresent ? "✓" : "✗ missing"}`,
     );

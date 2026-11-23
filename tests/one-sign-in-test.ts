@@ -4,7 +4,11 @@
  */
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
+  GmailClient,
+  GmailWriter,
+  InsufficientScopeError,
   loginInteractive,
+  MemoryTokenStore,
   type OAuthCredential,
   OAuthError,
   SCOPE_COMPOSE,
@@ -20,6 +24,7 @@ import {
   logout,
   LOGOUT_QUESTION,
   logoutQuestion,
+  whoami,
   WRITE_FLAG_IGNORED,
 } from "../cli/commands.ts";
 import { migrateWriteSignIn } from "../cli/migrate.ts";
@@ -279,4 +284,74 @@ Deno.test("logout --yes revokes at Google and forgets the account, as before", a
     assertEquals(JSON.parse(await Deno.readTextFile(path)).accounts, {});
     assert((await Deno.readTextFile(`${dir}/auth.log`)).includes('"event":"logout"'));
   });
+});
+
+// ── whoami and the scope error ──────────────────────────────────────────────
+
+Deno.test("a write with a read-only sign-in fails before any request; the remedy is plain login", async () => {
+  const store = new MemoryTokenStore();
+  await store.save({
+    ...cred("owner@home.test", READ_ONLY),
+    accessTokenExpiresAt: "2999-01-01T00:00:00.000Z",
+  });
+  let calls = 0;
+  const gmail = new GmailClient({
+    clientSecret: { clientId: "id", clientSecret: "s" },
+    store,
+    fetch: () => {
+      calls++;
+      return Promise.resolve(new Response("{}"));
+    },
+  });
+  const err = await assertRejects(
+    () => new GmailWriter(gmail).createDraft({ to: ["a@away.test"], text: "x" }),
+    InsufficientScopeError,
+  );
+  assert(err.message.endsWith("Run login."), err.message);
+  assert(!err.message.includes("--write"));
+  assertEquals(calls, 0);
+});
+
+Deno.test("whoami shows one sign-in and whether it can write", async () => {
+  for (const [scope, canWrite] of [[ALL, true], [READ_ONLY, false]] as const) {
+    await withTempHome(async (dir) => {
+      await Deno.writeTextFile(
+        `${dir}/credentials.json`,
+        store({
+          "owner@home.test": {
+            ...cred("owner@home.test", scope),
+            accessTokenExpiresAt: "2999-01-01T00:00:00.000Z",
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        `${dir}/client-secret.json`,
+        JSON.stringify({ installed: { client_id: "id", client_secret: "s" } }),
+      );
+      const keep = Deno.env.get("GMAIL_CLIENT_SECRET_PATH");
+      Deno.env.set("GMAIL_CLIENT_SECRET_PATH", `${dir}/client-secret.json`);
+      const real = globalThis.fetch;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ emailAddress: "owner@home.test", messagesTotal: 3 })),
+        );
+      try {
+        const r = await capture(() => whoami(contextFromEnv({ json: true })));
+        const report = JSON.parse(r.lines.join("\n"));
+        assertEquals([report.canWrite, report.mailbox], [canWrite, "owner@home.test"]);
+        assertEquals(report.credentialsPath, `${dir}/credentials.json`);
+        assertEquals("grant" in report, false, "no read/write grant split any more");
+        const human = await capture(() => whoami(contextFromEnv({})));
+        assert(
+          human.lines.some((l) =>
+            l.startsWith("sign-in ") && l.includes(canWrite ? "can write" : "read-only")
+          ),
+        );
+      } finally {
+        globalThis.fetch = real;
+        if (keep === undefined) Deno.env.delete("GMAIL_CLIENT_SECRET_PATH");
+        else Deno.env.set("GMAIL_CLIENT_SECRET_PATH", keep);
+      }
+    });
+  }
 });

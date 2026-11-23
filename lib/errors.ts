@@ -50,7 +50,8 @@ export class InsufficientScopeError extends Error {
   /** Error class name, stable across minification. */
   override name = "InsufficientScopeError";
   /**
-   * Build with the missing scope and what was granted; the message names both and the remedy.
+   * Build with the missing scope and what was granted; the message names both and the remedy
+   * (`Run login.`: the CLI's one sign-in grants every scope the package uses).
    * @param required The scope the operation needs.
    * @param granted Scopes the credential actually holds.
    */
@@ -58,7 +59,7 @@ export class InsufficientScopeError extends Error {
     super(
       `This credential does not grant ${required.split("/").at(-1)}. Granted: ${
         granted.map((g) => g.split("/").at(-1)).join(", ") || "(none)"
-      }. Run login --write.`,
+      }. Run login.`,
     );
   }
 }

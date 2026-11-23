@@ -1,5 +1,5 @@
 /**
- * Opt-in live write test. Runs only with GMAIL_API_LIVE_WRITE=1 and a prior `login --write`.
+ * Opt-in live write test. Runs only with GMAIL_API_LIVE_WRITE=1 and a prior `login`.
  * Touches only labels under `gmail-api-test/<uuid>` and one draft; everything is removed in
  * `finally`. Never trashes, never sends.
  *   GMAIL_API_LIVE_WRITE=1 deno task test:live:write
