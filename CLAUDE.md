@@ -44,13 +44,16 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
 
 - Read-only stays the default. Writes exist only on `GmailWriter` (`lib/writes.ts`): labels and
   drafts, decided in the workspace spec `../_specs/delivered/SPEC-GMAIL-API-WRITE-SUPPORT-2026-09-22.md` (2026-09-22). No send, trash or delete; adding any of
-  those is a new decision and a new spec. The write grant lives in `credentials.modify.json`, never
-  in `credentials.json`.
+  those is a new decision and a new spec. Since 0.9.0 the CLI holds **one sign-in** with every
+  scope (`SCOPES_ALL`) in `credentials.json`; the old `credentials.modify.json` is migrated, never
+  revoked (`cli/migrate.ts`; spec `../_specs/current/SPEC-GMAIL-API-ONE-SIGN-IN-2026-11-23.md`).
+  The library default stays read-only. `logout` without `--yes` only asks: a revoke ends the app's
+  whole grant for the user.
 - Never log or echo the client secret, refresh token, or attachment ids in error text.
 - Config lives in `~/.simt/gmail-api/` (workspace convention: `~/.simt/` holds all local tool
   config). `client-secret.json` is the Desktop-app OAuth client; `credentials.json` the per-mailbox
-  grants; `credentials.modify.json` the write grants (`login --write`). Env overrides:
-  `GMAIL_CLIENT_SECRET_PATH`, `GMAIL_API_CREDENTIALS`, `GMAIL_API_CREDENTIALS_MODIFY`.
+  sign-ins (read, labels, drafts). Env overrides: `GMAIL_CLIENT_SECRET_PATH`,
+  `GMAIL_API_CREDENTIALS`; `GMAIL_API_CREDENTIALS_MODIFY` is read only by the migration.
 - Loopback port 8731 is claimed in `~/DEV_PORTS.md`.
 - **Do not push, tag, or `deno publish` without explicit go-ahead.** Publishing is by `v*` tag via
   `.github/workflows/publish.yml`. Run the workspace pre-publish leak checklist first.
@@ -63,8 +66,9 @@ Specs are **not kept in this repo** and never committed. They live in the worksp
 - The `simt:gmail` skill (`~/.simt-marketplace/plugins/simt/skills/gmail`) **vendors `lib/`** into
   `scripts/lib/` (hosted sandboxes return 403 for jsr.io, so this is permanent) and checks drift with
   `deno task verify-vendor`. After any `lib/` change, run `deno task vendor` in the skill folder and
-  update the version line in `scripts/lib/VENDORED.md`. The skill holds only the read-only
-  credential, so the vendored `GmailWriter` fails locally with `InsufficientScopeError`.
+  update the version line in `scripts/lib/VENDORED.md`. From 0.9.0 the skill uses the same one
+  sign-in (`credentials.json`, every scope) and runs the same migration; a read-only sign-in still
+  makes the vendored `GmailWriter` fail locally with `InsufficientScopeError` ("Run login.").
 - Since 0.4.0 the skill's Gmail logic (body text, thread search, write guards and log) lives in
   `lib/`; the skill keeps only arguments, `~/.simt/gmail-api/` paths, agent rules (date bound,
   `-in:chats`) and output. Keep new Gmail behaviour here, not in the skill. `lib/` must import
